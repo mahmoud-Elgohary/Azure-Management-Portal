@@ -1,8 +1,9 @@
 import os
 import sys
+import secrets
 import threading
 
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
 
 # Ensure project root is on path when run directly
 sys.path.insert(0, os.path.dirname(__file__))
@@ -12,6 +13,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import config
 from models.db import init_db
 from models import queries
+from auth.sso import get_auth_url, get_token_from_code, login_required, check_group
 
 app = Flask(__name__)
 app.secret_key = config.FLASK_SECRET_KEY
@@ -31,9 +33,73 @@ def _rbac_error(exc: Exception) -> str:
     return f"Azure error: {msg}"
 
 
+def _redirect_uri() -> str:
+    return url_for("auth_callback", _external=True)
+
+
+# ── Login landing page ────────────────────────────────────────────────────────
+
+@app.route("/login")
+def login_page():
+    if session.get("user"):
+        return redirect(url_for("dashboard"))
+    return render_template("login.html")
+
+
+# ── Auth routes ───────────────────────────────────────────────────────────────
+
+@app.route("/auth/login")
+def auth_login():
+    state = secrets.token_urlsafe(16)
+    session["oauth_state"] = state
+    return redirect(get_auth_url(_redirect_uri(), state))
+
+
+@app.route("/auth/callback")
+def auth_callback():
+    if request.args.get("state") != session.pop("oauth_state", None):
+        flash("Invalid OAuth state — possible CSRF. Please try again.", "danger")
+        return redirect(url_for("auth_login"))
+
+    error = request.args.get("error")
+    if error:
+        flash(f"Sign-in failed: {request.args.get('error_description', error)}", "danger")
+        return redirect(url_for("auth_login"))
+
+    result = get_token_from_code(request.args["code"], _redirect_uri())
+
+    if "error" in result:
+        flash(f"Token exchange failed: {result.get('error_description', result['error'])}", "danger")
+        return redirect(url_for("auth_login"))
+
+    claims = result.get("id_token_claims", {})
+    if not check_group(claims):
+        flash("Access denied — your account is not in the required group.", "danger")
+        return redirect(url_for("auth_login"))
+
+    session["user"] = {
+        "name": claims.get("name") or claims.get("preferred_username", "Unknown"),
+        "email": claims.get("preferred_username", ""),
+        "oid": claims.get("oid", ""),
+    }
+
+    return redirect(session.pop("next", url_for("dashboard")))
+
+
+@app.route("/auth/logout")
+def auth_logout():
+    session.clear()
+    logout_url = (
+        f"{config.AUTHORITY}/oauth2/v2.0/logout"
+        f"?post_logout_redirect_uri={url_for('dashboard', _external=True)}"
+    )
+    return redirect(logout_url)
+
+
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 @app.route("/")
+@login_required
 def dashboard():
     try:
         vm_power = queries.vm_power_summary()
@@ -56,12 +122,12 @@ def dashboard():
 # ── VMs ───────────────────────────────────────────────────────────────────────
 
 @app.route("/vms")
+@login_required
 def vms():
     rg = request.args.get("rg")
     tag = request.args.get("tag")
     try:
         vm_list = queries.get_vms(resource_group=rg, tag_filter=tag)
-        # Attach latest CPU + status light
         for vm in vm_list:
             cpu = queries.latest_vm_cpu(vm["vm_id"])
             vm["cpu_pct"] = round(cpu, 1) if cpu is not None else None
@@ -80,6 +146,7 @@ def vms():
 
 
 @app.route("/vms/<path:vm_id>/metrics")
+@login_required
 def vm_metrics(vm_id):
     metric = request.args.get("metric", "Percentage CPU")
     data = queries.get_vm_metrics(vm_id, metric, hours=24)
@@ -89,6 +156,7 @@ def vm_metrics(vm_id):
 # ── SQL / Elastic Pools ────────────────────────────────────────────────────────
 
 @app.route("/sql")
+@login_required
 def sql_view():
     rg = request.args.get("rg")
     try:
@@ -112,6 +180,7 @@ def sql_view():
 # ── Cost ──────────────────────────────────────────────────────────────────────
 
 @app.route("/cost")
+@login_required
 def cost_view():
     sub = request.args.get("sub")
     try:
@@ -135,6 +204,7 @@ def cost_view():
 # ── Advisor ───────────────────────────────────────────────────────────────────
 
 @app.route("/advisor")
+@login_required
 def advisor_view():
     category = request.args.get("category")
     try:
@@ -155,6 +225,7 @@ def advisor_view():
 # ── Health ────────────────────────────────────────────────────────────────────
 
 @app.route("/health")
+@login_required
 def health_view():
     state = request.args.get("state")
     try:
@@ -175,6 +246,7 @@ def health_view():
 # ── Backup ────────────────────────────────────────────────────────────────────
 
 @app.route("/backup")
+@login_required
 def backup_view():
     try:
         items = queries.get_backup_status()
@@ -193,6 +265,7 @@ def backup_view():
 # ── Sync Now ──────────────────────────────────────────────────────────────────
 
 @app.route("/sync", methods=["POST"])
+@login_required
 def trigger_sync():
     def _run():
         from sync.sync_job import run_sync

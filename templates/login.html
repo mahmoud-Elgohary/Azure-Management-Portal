@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign in — WTS Azure Cloud Manager</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" />
+  <style>
+    body {
+      background: #f0f2f5;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .login-card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.10);
+      padding: 2.5rem 2.5rem 2rem;
+      width: 100%;
+      max-width: 400px;
+    }
+    .app-logo {
+      display: flex;
+      align-items: center;
+      gap: .6rem;
+      margin-bottom: 1.8rem;
+    }
+    .app-logo .icon {
+      width: 40px; height: 40px;
+      background: #0078d4;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .app-logo .icon svg { width: 22px; height: 22px; fill: #fff; }
+    .app-title  { font-size: 1.15rem; font-weight: 700; color: #1a1a2e; line-height: 1.2; }
+    .app-sub    { font-size: .75rem; color: #6c757d; }
+
+    .btn-microsoft {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: .75rem;
+      width: 100%;
+      padding: .65rem 1rem;
+      background: #fff;
+      border: 1.5px solid #8c8c8c;
+      border-radius: 4px;
+      color: #5e5e5e;
+      font-size: .95rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: background .15s, box-shadow .15s;
+    }
+    .btn-microsoft:hover {
+      background: #f3f3f3;
+      box-shadow: 0 2px 8px rgba(0,0,0,.10);
+      color: #333;
+    }
+    .btn-microsoft svg { flex-shrink: 0; }
+    .divider { border-color: #e9ecef; margin: 1.5rem 0; }
+    .footer-note { font-size: .78rem; color: #adb5bd; text-align: center; margin-top: 1.5rem; }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+
+    <div class="app-logo">
+      <div class="icon">
+        <!-- cloud icon -->
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/>
+        </svg>
+      </div>
+      <div>
+        <div class="app-title">WTS Azure Cloud Manager</div>
+        <div class="app-sub">Infrastructure monitoring portal</div>
+      </div>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ category }} py-2 small">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    <p class="text-muted small mb-3">Sign in with your WTS Microsoft account to continue.</p>
+
+    <a href="{{ url_for('auth_login') }}" class="btn-microsoft">
+      <!-- Microsoft logo -->
+      <svg width="20" height="20" viewBox="0 0 21 21" xmlns="http://www.w3.org/2000/svg">
+        <rect x="1"  y="1"  width="9" height="9" fill="#f25022"/>
+        <rect x="11" y="1"  width="9" height="9" fill="#7fba00"/>
+        <rect x="1"  y="11" width="9" height="9" fill="#00a4ef"/>
+        <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+      </svg>
+      Sign in with Microsoft
+    </a>
+
+    <hr class="divider" />
+    <div class="footer-note">
+      Read-only access &mdash; no changes are made to your Azure environment.
+    </div>
+
+  </div>
+</body>
+</html>

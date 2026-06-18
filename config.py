@@ -16,6 +16,14 @@ APP_PORT = int(os.environ.get("APP_PORT", 8050))
 SYNC_INTERVAL_MINUTES = int(os.environ.get("SYNC_INTERVAL_MINUTES", 60))
 FLASK_SECRET_KEY = os.environ["FLASK_SECRET_KEY"]
 
+# ── Entra ID sign-in ──────────────────────────────────────────────────────────
+AUTHORITY = os.environ.get(
+    "AUTHORITY",
+    f"https://login.microsoftonline.com/{os.environ.get('AZURE_TENANT_ID', '')}",
+)
+AUTH_REDIRECT_PATH = os.environ.get("AUTH_REDIRECT_PATH", "/auth/callback")
+ALLOWED_GROUP_ID = os.environ.get("ALLOWED_GROUP_ID", "")
+
 DB_PATH = os.path.join(os.path.dirname(__file__), "cache.sqlite")
 
 # ── Status-light thresholds (all configurable here) ──────────────────────────
