@@ -16,8 +16,8 @@ _SCOPES = []  # MSAL adds openid/profile/email automatically; passing them raise
 
 def _msal_app() -> msal.ConfidentialClientApplication:
     return msal.ConfidentialClientApplication(
-        client_id=config.AZURE_CLIENT_ID,
-        client_credential=config.AZURE_CLIENT_SECRET,
+        client_id=config.AUTH_CLIENT_ID,
+        client_credential=config.AUTH_CLIENT_SECRET,
         authority=config.AUTHORITY,
     )
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Interactive wizard — collects credentials and sign-in settings,
-validates them against Azure Resource Graph, then writes .env.
+validates them against all three Azure data planes, then writes .env.
 Run this to create or update the configuration.
 """
 
@@ -10,6 +10,7 @@ import os
 import re
 import secrets
 import sys
+from datetime import date, timedelta
 
 GUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -31,7 +32,6 @@ def warn(msg): print(f"{YELLOW}⚠ {msg}{RESET}")
 # ── .env I/O ─────────────────────────────────────────────────────────────────
 
 def load_env(path: str) -> dict:
-    """Parse existing .env into a plain dict (comment lines and blanks ignored)."""
     if not os.path.exists(path):
         return {}
     result = {}
@@ -97,49 +97,181 @@ def prompt_int(label: str, default: int) -> int:
             err("Must be a positive integer.")
 
 
-def prompt_secret(existing: bool) -> str:
-    """
-    Returns the new secret, or '' to signal 'keep existing'.
-    Never echoes the value.
-    """
+def prompt_secret(label: str, existing: bool) -> str:
+    """Prompt for a secret via getpass — never echoed."""
     hint = " (leave blank to keep existing)" if existing else ""
-    val = getpass.getpass(f"  AZURE_CLIENT_SECRET{hint}: ")
-    return val
+    return getpass.getpass(f"  {label}{hint}: ")
 
 
-# ── Azure validation ──────────────────────────────────────────────────────────
+# ── Azure validation — all three data planes ──────────────────────────────────
 
-def validate_azure(tenant_id: str, client_id: str, client_secret: str,
-                   subscription_ids: list[str]) -> bool:
+def validate_data_planes(tenant_id: str, client_id: str, client_secret: str,
+                         subscription_ids: list[str]) -> dict | None:
+    """
+    Tests Reader, Cost Management Reader, and Log Analytics Data Reader.
+    Returns dict {plane: (status, detail, error_msg)} or None on credential failure.
+    """
     try:
         from azure.identity import ClientSecretCredential
-        from azure.mgmt.resourcegraph import ResourceGraphClient
-        from azure.mgmt.resourcegraph.models import QueryRequest
-
         cred = ClientSecretCredential(
             tenant_id=tenant_id,
             client_id=client_id,
             client_secret=client_secret,
         )
-        client = ResourceGraphClient(cred)
-        req = QueryRequest(subscriptions=subscription_ids, query="Resources | limit 1 | project id")
-        result = client.resources(req)
+    except Exception as exc:
+        err(f"Failed to create credential object: {exc}")
+        return None
+
+    results = {}
+    workspace_id = None
+    workspace_name = None
+
+    # A. Reader → Resource Graph ───────────────────────────────────────────────
+    print("\n  A. Reader → Resource Graph …")
+    try:
+        from azure.mgmt.resourcegraph import ResourceGraphClient
+        from azure.mgmt.resourcegraph.models import QueryRequest, QueryRequestOptions
+
+        rg_client = ResourceGraphClient(cred)
+        req = QueryRequest(
+            subscriptions=subscription_ids,
+            query="Resources | limit 5 | project id",
+            options=QueryRequestOptions(result_format="objectArray"),
+        )
+        result = rg_client.resources(req)
         count = len(result.data) if result.data else 0
-        ok(f"Azure connection OK — Resource Graph returned {count} row(s).")
-        return True
+        ok(f"  A. Reader (Resource Graph): PASS — {count} resource(s) returned")
+        results["resource_graph"] = ("PASS", f"{count} resources", None)
+
+        # Discover a Log Analytics workspace for test C
+        ws_req = QueryRequest(
+            subscriptions=subscription_ids,
+            query=(
+                "Resources"
+                " | where type == 'microsoft.operationalinsights/workspaces'"
+                " | project name, workspaceId = tostring(properties.customerId)"
+                " | limit 1"
+            ),
+            options=QueryRequestOptions(result_format="objectArray"),
+        )
+        ws_result = rg_client.resources(ws_req)
+        if ws_result.data:
+            row = ws_result.data[0]
+            workspace_id = row.get("workspaceId", "")
+            workspace_name = row.get("name", "unknown")
+
     except Exception as exc:
         msg = str(exc)
         if "AADSTS" in msg or "authentication" in msg.lower():
-            err("Authentication failed — bad client secret or client ID.")
+            err("  A. Reader (Resource Graph): FAIL — authentication error (bad client ID or secret).")
         elif "AuthorizationFailed" in msg or "does not have authorization" in msg:
-            err(
-                "Auth succeeded but RBAC check failed.\n"
-                "  Ensure 'Reader' + 'Cost Management Reader' are assigned on the subscription.\n"
-                "  RBAC can take a few minutes to propagate — try again shortly."
-            )
+            err("  A. Reader (Resource Graph): FAIL — RBAC denied. Assign 'Reader' on the subscription.")
         else:
-            err(f"Unexpected error: {msg}")
-        return False
+            err(f"  A. Reader (Resource Graph): FAIL — {msg}")
+        results["resource_graph"] = ("FAIL", None, msg)
+
+    # B. Cost Management Reader → Cost query ──────────────────────────────────
+    print("  B. Cost Management Reader → MTD cost query …")
+    try:
+        from azure.mgmt.costmanagement import CostManagementClient
+        from azure.mgmt.costmanagement.models import (
+            QueryDefinition, QueryTimePeriod, QueryDataset, QueryAggregation,
+        )
+
+        cost_client = CostManagementClient(cred)
+        today = date.today()
+        first = today.replace(day=1)
+
+        query = QueryDefinition(
+            type="ActualCost",
+            timeframe="Custom",
+            time_period=QueryTimePeriod(
+                from_property=first.strftime("%Y-%m-%dT00:00:00Z"),
+                to=today.strftime("%Y-%m-%dT23:59:59Z"),
+            ),
+            dataset=QueryDataset(
+                granularity="None",
+                aggregation={"totalCost": QueryAggregation(name="PreTaxCost", function="Sum")},
+            ),
+        )
+        scope = f"/subscriptions/{subscription_ids[0]}"
+        result = cost_client.query.usage(scope, query)
+
+        total = 0.0
+        currency = "USD"
+        if result.rows and result.columns:
+            cols = [c.name for c in result.columns]
+            row_dict = dict(zip(cols, result.rows[0]))
+            for key, val in row_dict.items():
+                if isinstance(val, (int, float)) and "cost" in key.lower():
+                    total = float(val)
+                    break
+            currency = str(row_dict.get("Currency", "USD"))
+
+        ok(f"  B. Cost Management Reader: PASS — MTD total ≈ {total:.2f} {currency}")
+        results["cost"] = ("PASS", f"{total:.2f} {currency}", None)
+
+    except Exception as exc:
+        msg = str(exc)
+        if "AuthorizationFailed" in msg or "does not have authorization" in msg:
+            err("  B. Cost Management Reader: FAIL — 'Cost Management Reader' role missing.")
+        elif "BillingAccount" in msg or "IndirectCostDisabled" in msg:
+            err(f"  B. Cost Management Reader: FAIL — billing access error: {msg[:80]}")
+        else:
+            err(f"  B. Cost Management Reader: FAIL — {msg[:120]}")
+        results["cost"] = ("FAIL", None, msg)
+
+    # C. Log Analytics Data Reader → KQL query ────────────────────────────────
+    print("  C. Log Analytics Data Reader → KQL query …")
+    if not workspace_id:
+        warn("  C. Log Analytics Data Reader: SKIP — no Log Analytics workspace found in subscription.")
+        results["log_analytics"] = ("SKIP", "no workspace found", None)
+    else:
+        try:
+            from azure.monitor.query import LogsQueryClient
+
+            logs_client = LogsQueryClient(cred)
+            result = logs_client.query_workspace(
+                workspace_id=workspace_id,
+                query="AzureActivity | take 1",
+                timespan=timedelta(days=7),
+            )
+            row_count = 0
+            if hasattr(result, "tables") and result.tables:
+                row_count = sum(len(t.rows) for t in result.tables)
+            ok(f"  C. Log Analytics Data Reader: PASS — workspace '{workspace_name}', {row_count} row(s)")
+            results["log_analytics"] = ("PASS", f"ws '{workspace_name}', {row_count} rows", None)
+
+        except Exception as exc:
+            msg = str(exc)
+            if "403" in msg or "Forbidden" in msg or "Authorization" in msg:
+                err(f"  C. Log Analytics Data Reader: FAIL (403) — workspace '{workspace_name}'")
+                warn("     Workspace may be in resource-context access mode.")
+                warn("     Fix: assign 'Log Analytics Reader' on the workspace resource in the portal,")
+                warn("     OR switch the workspace to workspace-context access mode.")
+                results["log_analytics"] = ("FAIL-403", workspace_name, msg)
+            else:
+                err(f"  C. Log Analytics Data Reader: FAIL — {msg[:120]}")
+                results["log_analytics"] = ("FAIL", workspace_name, msg)
+
+    return results
+
+
+def print_results_table(results: dict):
+    labels = {
+        "resource_graph": "A. Reader → Resource Graph   ",
+        "cost":           "B. Cost Management Reader    ",
+        "log_analytics":  "C. Log Analytics Data Reader ",
+    }
+    print("\n  ┌──────────────────────────────────┬──────────┬──────────────────────────┐")
+    print("  │  Data-plane validation           │ Status   │ Detail                   │")
+    print("  ├──────────────────────────────────┼──────────┼──────────────────────────┤")
+    for plane, (status, detail, _) in results.items():
+        label = labels.get(plane, plane[:32].ljust(32))
+        color = GREEN if status == "PASS" else (YELLOW if "SKIP" in status else RED)
+        det = str(detail or "")[:26]
+        print(f"  │  {label}│ {color}{status:<8}{RESET} │ {det:<26} │")
+    print("  └──────────────────────────────────┴──────────┴──────────────────────────┘")
 
 
 # ── Main wizard ───────────────────────────────────────────────────────────────
@@ -149,41 +281,87 @@ def main():
 
     existing = load_env(ENV_PATH)
     if existing:
-        warn(f"Existing .env found — press Enter to keep each current value.\n")
+        warn("Existing .env found — press Enter to keep each current value.\n")
 
-    # ── Azure credentials ────────────────────────────────────────────────────
-    print("── Azure credentials ──────────────────────────────────────")
+    # ── DATA credentials (Azure-Reports-MSGraph) ──────────────────────────────
+    print("── DATA credentials (Azure-Reports-MSGraph SP) ────────────────────")
+    print("   Used for all ARM / Cost / Log Analytics reads.")
+    print("   AZURE_CLIENT_ID = the APPLICATION (CLIENT) ID from the app")
+    print("   registration Overview — NOT the service-principal object ID.\n")
+
     tenant_id = prompt_guid(
         "AZURE_TENANT_ID      (WTS Directory / tenant ID)",
         existing.get("AZURE_TENANT_ID", "7f8e2ae3-9032-41d0-98af-2b5294ef998b"),
     )
     client_id = prompt_guid(
-        "AZURE_CLIENT_ID      (app registration client ID)",
+        "AZURE_CLIENT_ID      (Azure-Reports-MSGraph Application/client ID)",
         existing.get("AZURE_CLIENT_ID", ""),
     )
 
-    has_existing_secret = bool(existing.get("AZURE_CLIENT_SECRET", ""))
-    new_secret = prompt_secret(existing=has_existing_secret)
-    if not new_secret:
-        if has_existing_secret:
+    has_data_secret = bool(existing.get("AZURE_CLIENT_SECRET", ""))
+    new_data_secret = prompt_secret("AZURE_CLIENT_SECRET", existing=has_data_secret)
+    if not new_data_secret:
+        if has_data_secret:
             client_secret = existing["AZURE_CLIENT_SECRET"]
-            ok("Keeping existing client secret.")
+            ok("Keeping existing AZURE_CLIENT_SECRET.")
         else:
-            err("Client secret cannot be empty.")
+            err("AZURE_CLIENT_SECRET cannot be empty.")
             sys.exit(1)
     else:
-        client_secret = new_secret
+        client_secret = new_data_secret
 
-    subscription_ids = prompt_guid_list(
+    subscription_ids_list = prompt_guid_list(
         "AZURE_SUBSCRIPTION_IDS",
         existing.get("AZURE_SUBSCRIPTION_IDS", "484960a1-4c7a-4720-9e9c-82757f797502"),
     )
 
-    # ── Sign-in settings ─────────────────────────────────────────────────────
-    print("\n── Entra sign-in settings ─────────────────────────────────")
+    # ── SIGN-IN credentials (MSAL OAuth — separate from data SP) ─────────────
+    print("\n── SIGN-IN credentials (MSAL OAuth / Entra browser login) ─────────")
+    print("   Used ONLY for the browser sign-in flow — not for data reads.")
+    print("   Recommended: keep the existing WTS-Azure-Manager app here,")
+    print("   since it already has https://192.168.1.115:8444/auth/callback")
+    print("   registered as a Web redirect URI.")
+    print("   If you use Azure-Reports-MSGraph for sign-in instead, that app")
+    print("   MUST have the same redirect URI + openid/profile/email consent.\n")
+
+    # Default to existing AUTH_CLIENT_ID; if not yet split, fall back to old AZURE_CLIENT_ID
+    default_auth_id = existing.get("AUTH_CLIENT_ID") or existing.get("AZURE_CLIENT_ID", "")
+    auth_client_id = prompt_guid(
+        "AUTH_CLIENT_ID       (sign-in app Application/client ID)",
+        default_auth_id,
+    )
+
+    has_auth_secret = bool(existing.get("AUTH_CLIENT_SECRET", ""))
+    new_auth_secret = prompt_secret("AUTH_CLIENT_SECRET", existing=has_auth_secret)
+    if not new_auth_secret:
+        if has_auth_secret:
+            auth_secret = existing["AUTH_CLIENT_SECRET"]
+            ok("Keeping existing AUTH_CLIENT_SECRET.")
+        else:
+            err("AUTH_CLIENT_SECRET cannot be empty.")
+            sys.exit(1)
+    else:
+        auth_secret = new_auth_secret
+
+    # ── Report sign-in app choice ─────────────────────────────────────────────
     authority = f"https://login.microsoftonline.com/{tenant_id}"
     ok(f"AUTHORITY auto-derived: {authority}")
 
+    if auth_client_id == client_id:
+        warn(
+            f"\n  Sign-in app == Data app (same client ID: {auth_client_id})."
+            f"\n  Ensure the Azure-Reports-MSGraph app registration has:"
+            f"\n    Web redirect URI:    https://192.168.1.115:8444/auth/callback"
+            f"\n    Delegated API perms: openid, profile, email  (admin-consented)"
+            f"\n  If the redirect URI is not registered, login will fail with"
+            f"\n  AADSTS50011 (redirect_uri mismatch)."
+        )
+    else:
+        ok(f"Sign-in app  → AUTH_CLIENT_ID  = {auth_client_id}  (browser login only)")
+        ok(f"Data app     → AZURE_CLIENT_ID = {client_id}  (ARM/Cost/Logs reads)")
+
+    # ── Entra redirect / group settings ──────────────────────────────────────
+    print("\n── Entra sign-in settings ──────────────────────────────────────────")
     auth_redirect_path = prompt(
         "AUTH_REDIRECT_PATH   (callback path registered in Entra)",
         existing.get("AUTH_REDIRECT_PATH", "/auth/callback"),
@@ -196,22 +374,32 @@ def main():
         err("ALLOWED_GROUP_ID must be a valid GUID or left blank.")
         sys.exit(1)
 
-    # ── App settings ─────────────────────────────────────────────────────────
-    print("\n── App settings ───────────────────────────────────────────")
+    # ── App settings ──────────────────────────────────────────────────────────
+    print("\n── App settings ────────────────────────────────────────────────────")
     app_port = prompt_int("APP_PORT", int(existing.get("APP_PORT", 8050)))
     sync_interval = prompt_int("SYNC_INTERVAL_MINUTES", int(existing.get("SYNC_INTERVAL_MINUTES", 60)))
 
-    # Keep existing FLASK_SECRET_KEY — don't churn sessions on re-runs
     flask_secret = existing.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
     if "FLASK_SECRET_KEY" not in existing:
         ok(f"FLASK_SECRET_KEY auto-generated ({len(flask_secret)} hex chars).")
     else:
         ok("Keeping existing FLASK_SECRET_KEY (sessions preserved).")
 
-    # ── Validate ─────────────────────────────────────────────────────────────
-    print("\nValidating credentials against Azure Resource Graph …")
-    if not validate_azure(tenant_id, client_id, client_secret, subscription_ids):
-        retry = input("\nValidation failed. Re-enter values? [y/N]: ").strip().lower()
+    # ── Validate all three data planes ────────────────────────────────────────
+    print(f"\nValidating Azure-Reports-MSGraph data credentials (client={client_id}) …")
+    results = validate_data_planes(tenant_id, client_id, client_secret, subscription_ids_list)
+
+    if results is None:
+        print("Aborted — credential object could not be created. .env unchanged.")
+        return
+
+    print_results_table(results)
+
+    rg_status = results.get("resource_graph", ("FAIL",))[0]
+    if rg_status != "PASS":
+        retry = input(
+            "\nResource Graph failed (Reader role is required). Re-enter values? [y/N]: "
+        ).strip().lower()
         if retry == "y":
             main()
         else:
@@ -219,19 +407,21 @@ def main():
         return
 
     # ── Write ─────────────────────────────────────────────────────────────────
-    new_env = {
-        "AZURE_TENANT_ID": tenant_id,
-        "AZURE_CLIENT_ID": client_id,
-        "AZURE_CLIENT_SECRET": client_secret,
-        "AZURE_SUBSCRIPTION_IDS": ",".join(subscription_ids),
-        "AUTHORITY": authority,
-        "AUTH_REDIRECT_PATH": auth_redirect_path,
-        "ALLOWED_GROUP_ID": allowed_group_id,
-        "APP_PORT": str(app_port),
-        "SYNC_INTERVAL_MINUTES": str(sync_interval),
-        "FLASK_SECRET_KEY": flask_secret,
+    new_env: dict[str, str] = {
+        "AZURE_TENANT_ID":        tenant_id,
+        "AZURE_CLIENT_ID":        client_id,
+        "AZURE_CLIENT_SECRET":    client_secret,
+        "AZURE_SUBSCRIPTION_IDS": ",".join(subscription_ids_list),
+        "AUTH_CLIENT_ID":         auth_client_id,
+        "AUTH_CLIENT_SECRET":     auth_secret,
+        "AUTHORITY":              authority,
+        "AUTH_REDIRECT_PATH":     auth_redirect_path,
+        "ALLOWED_GROUP_ID":       allowed_group_id,
+        "APP_PORT":               str(app_port),
+        "SYNC_INTERVAL_MINUTES":  str(sync_interval),
+        "FLASK_SECRET_KEY":       flask_secret,
     }
-    # Preserve any extra keys from old .env not covered above
+    # Preserve any extra keys from old .env not in the schema above
     for k, v in existing.items():
         if k not in new_env:
             new_env[k] = v
@@ -239,15 +429,14 @@ def main():
     write_env(new_env)
 
     print("\nSetup complete.")
-    print("  ⚠  IMPORTANT — add this redirect URI to your Entra app registration:")
-    print(f"     https://<your-vm-ip>:<port>{auth_redirect_path}")
-    print("     (e.g. https://192.168.1.115:8444/auth/callback)")
+    print(f"\n  ⚠  Verify the sign-in app (AUTH_CLIENT_ID={auth_client_id}) in Entra:")
+    print(f"     Web redirect URI registered: https://192.168.1.115:8444{auth_redirect_path}")
+    if auth_client_id == client_id:
+        print("     Delegated API permissions granted: openid, profile, email")
     print("\nNext steps:")
-    print("  1. Add the redirect URI in Entra (see above)")
-    print("  2. Restart the app:  systemctl --user restart wts-azure-manager")
-    print("  3. Open https://192.168.1.115:8444 — you should be redirected to Microsoft login\n")
-    print("  Note: the interactive browser login cannot be tested headlessly.")
-    print("        Verify it by opening the portal in your browser after restart.\n")
+    print("  1. Restart the service:  systemctl --user restart wts-azure-manager")
+    print("  2. Open https://192.168.1.115:8444 — confirm Entra login redirect appears.")
+    print("  3. Post-login: trigger a sync from the dashboard or via POST /sync.\n")
 
 
 if __name__ == "__main__":

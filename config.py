@@ -12,6 +12,12 @@ AZURE_SUBSCRIPTION_IDS = [
     if s.strip()
 ]
 
+# Sign-in (MSAL OAuth) — may differ from the data SP above.
+# Auth_CLIENT_ID/SECRET use the WTS-Azure-Manager app registration (which already
+# has the redirect URI); AZURE_CLIENT_ID/SECRET are for ARM/Cost/Logs reads only.
+AUTH_CLIENT_ID     = os.environ.get("AUTH_CLIENT_ID",     os.environ["AZURE_CLIENT_ID"])
+AUTH_CLIENT_SECRET = os.environ.get("AUTH_CLIENT_SECRET", os.environ["AZURE_CLIENT_SECRET"])
+
 APP_PORT = int(os.environ.get("APP_PORT", 8050))
 SYNC_INTERVAL_MINUTES = int(os.environ.get("SYNC_INTERVAL_MINUTES", 60))
 FLASK_SECRET_KEY = os.environ["FLASK_SECRET_KEY"]

@@ -24,8 +24,9 @@ def _rbac_error(exc: Exception) -> str:
     msg = str(exc)
     if "AuthorizationFailed" in msg or "does not have authorization" in msg:
         return (
-            "Permission denied. The service principal requires 'Reader' and "
-            "'Cost Management Reader' roles on the target subscriptions. "
+            "Permission denied. The data service principal requires 'Reader', "
+            "'Cost Management Reader', and 'Log Analytics Data Reader' roles "
+            "on the target subscriptions. "
             f"Azure error: {msg}"
         )
     if "AADSTS" in msg:
