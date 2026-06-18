@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Resource Health — WTS Azure Manager{% endblock %}
+
+{% block content %}
+<h4 class="mb-3">Resource Health</h4>
+
+<!-- State filter -->
+<div class="mb-3">
+  <a href="{{ url_for('health_view') }}" class="btn btn-sm {% if not selected_state %}btn-dark{% else %}btn-outline-dark{% endif %} me-1">All</a>
+  {% for state, cnt in summary.items() %}
+    <a href="{{ url_for('health_view', state=state) }}"
+       class="btn btn-sm me-1
+         {% if selected_state == state %}
+           {% if state == 'Available' %}btn-success
+           {% elif state == 'Unavailable' %}btn-danger
+           {% elif state == 'Degraded' %}btn-warning
+           {% else %}btn-secondary{% endif %}
+         {% else %}btn-outline-secondary{% endif %}">
+      {{ state }} ({{ cnt }})
+    </a>
+  {% endfor %}
+</div>
+
+{% if items %}
+<div class="table-responsive">
+  <table class="table table-hover table-sm">
+    <thead class="table-dark">
+      <tr><th>Resource</th><th>Location</th><th>State</th><th>Summary</th><th>Reason</th><th>Since</th></tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+      <tr class="{% if item.availability_state == 'Unavailable' %}table-danger{% elif item.availability_state == 'Degraded' %}table-warning{% endif %}">
+        <td><small>{{ item.resource_id.split('/')[-1] }}</small></td>
+        <td>{{ item.location or '—' }}</td>
+        <td>
+          <span class="badge
+            {% if item.availability_state == 'Available' %}bg-success
+            {% elif item.availability_state == 'Unavailable' %}bg-danger
+            {% elif item.availability_state == 'Degraded' %}bg-warning text-dark
+            {% else %}bg-secondary{% endif %}">
+            {{ item.availability_state or '—' }}
+          </span>
+        </td>
+        <td><small>{{ item.summary or '—' }}</small></td>
+        <td><small>{{ item.reason_type or '—' }}</small></td>
+        <td><small>{{ (item.occured_time or '')[:16].replace('T',' ') }}</small></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  <div class="alert alert-success">All resources healthy — or sync not yet run.</div>
+{% endif %}
+{% endblock %}

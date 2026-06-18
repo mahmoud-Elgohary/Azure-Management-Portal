@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Cost — WTS Azure Manager{% endblock %}
+
+{% block content %}
+<h4 class="mb-3">Cost Management</h4>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-body text-center">
+        <div class="display-6">${{ mtd }}</div>
+        <div class="text-muted">Month-to-Date</div>
+      </div>
+    </div>
+  </div>
+  {% if anomalies %}
+  <div class="col-md-8">
+    <div class="card border-danger">
+      <div class="card-header text-danger fw-bold">Cost Anomalies Detected</div>
+      <div class="card-body">
+        {% for a in anomalies %}
+          <div class="small">{{ a.date }}: <strong>${{ "%.2f"|format(a.cost) }}</strong> vs avg ${{ "%.2f"|format(a.avg) }}</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Daily trend table -->
+<h5>Daily Spend by Resource Group</h5>
+{% if daily %}
+<div class="table-responsive">
+  <table class="table table-sm table-hover">
+    <thead class="table-dark">
+      <tr><th>Date</th><th>Subscription</th><th>Resource Group</th><th>Cost</th><th>Currency</th></tr>
+    </thead>
+    <tbody>
+      {% for row in daily %}
+      <tr>
+        <td>{{ row.date }}</td>
+        <td><small>{{ row.subscription_id[-8:] }}</small></td>
+        <td>{{ row.resource_group or '(unassigned)' }}</td>
+        <td>${{ "%.4f"|format(row.cost) }}</td>
+        <td>{{ row.currency }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  <div class="alert alert-info">No cost data. Ensure Cost Management Reader role is assigned and sync has run.</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}WTS Azure Cloud Manager{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+  <div class="container-fluid">
+    <a class="navbar-brand fw-bold" href="{{ url_for('dashboard') }}">WTS Azure Manager</a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMenu">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navMenu">
+      <ul class="navbar-nav me-auto">
+        <li class="nav-item"><a class="nav-link {% if request.endpoint=='dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">Dashboard</a></li>
+        <li class="nav-item"><a class="nav-link {% if request.endpoint=='vms' %}active{% endif %}" href="{{ url_for('vms') }}">Virtual Machines</a></li>
+        <li class="nav-item"><a class="nav-link {% if request.endpoint=='sql_view' %}active{% endif %}" href="{{ url_for('sql_view') }}">SQL / Elastic Pools</a></li>
+        <li class="nav-item"><a class="nav-link {% if request.endpoint=='cost_view' %}active{% endif %}" href="{{ url_for('cost_view') }}">Cost</a></li>
+        <li class="nav-item"><a class="nav-link {% if request.endpoint=='advisor_view' %}active{% endif %}" href="{{ url_for('advisor_view') }}">Advisor</a></li>
+        <li class="nav-item"><a class="nav-link {% if request.endpoint=='health_view' %}active{% endif %}" href="{{ url_for('health_view') }}">Health</a></li>
+        <li class="nav-item"><a class="nav-link {% if request.endpoint=='backup_view' %}active{% endif %}" href="{{ url_for('backup_view') }}">Backup</a></li>
+      </ul>
+      <form action="{{ url_for('trigger_sync') }}" method="post" class="d-flex">
+        <button type="submit" class="btn btn-sm btn-outline-light">&#8635; Sync Now</button>
+      </form>
+    </div>
+  </div>
+</nav>
+
+<div class="container-fluid py-3">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+      </div>
+    {% endfor %}
+  {% endwith %}
+
+  {% if sync is defined and sync.age_minutes is not none %}
+    <div class="text-muted small mb-2">
+      Last synced <strong>{{ sync.age_minutes }} min ago</strong>
+      ({{ sync.synced_at[:19].replace('T',' ') }} UTC) &mdash; status: {{ sync.status }}
+    </div>
+  {% elif sync is defined %}
+    <div class="text-muted small mb-2">Never synced — run <code>python -m sync.sync_job</code> first.</div>
+  {% endif %}
+
+  {% block content %}{% endblock %}
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/js/bootstrap.bundle.min.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

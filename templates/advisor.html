@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Advisor — WTS Azure Manager{% endblock %}
+
+{% block content %}
+<h4 class="mb-3">Azure Advisor Recommendations</h4>
+
+<!-- Category filter pills -->
+<div class="mb-3">
+  <a href="{{ url_for('advisor_view') }}" class="btn btn-sm {% if not selected_category %}btn-dark{% else %}btn-outline-dark{% endif %} me-1">All</a>
+  {% for cat, cnt in summary.items() %}
+    <a href="{{ url_for('advisor_view', category=cat) }}"
+       class="btn btn-sm me-1
+         {% if selected_category == cat %}
+           {% if cat == 'Cost' %}btn-warning
+           {% elif cat == 'Security' %}btn-danger
+           {% elif cat == 'Reliability' %}btn-primary
+           {% elif cat == 'Performance' %}btn-info
+           {% else %}btn-secondary{% endif %}
+         {% else %}btn-outline-secondary{% endif %}">
+      {{ cat }} ({{ cnt }})
+    </a>
+  {% endfor %}
+</div>
+
+{% if recs %}
+<div class="table-responsive">
+  <table class="table table-hover table-sm">
+    <thead class="table-dark">
+      <tr><th>Category</th><th>Impact</th><th>Problem</th><th>Solution</th><th>Resource</th><th>Updated</th></tr>
+    </thead>
+    <tbody>
+      {% for r in recs %}
+      <tr>
+        <td>
+          <span class="badge
+            {% if r.category == 'Cost' %}bg-warning text-dark
+            {% elif r.category == 'Security' %}bg-danger
+            {% elif r.category == 'Reliability' %}bg-primary
+            {% elif r.category == 'Performance' %}bg-info text-dark
+            {% else %}bg-secondary{% endif %}">
+            {{ r.category }}
+          </span>
+        </td>
+        <td><span class="badge {% if r.impact == 'High' %}bg-danger{% elif r.impact == 'Medium' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ r.impact }}</span></td>
+        <td>{{ r.short_description or '—' }}</td>
+        <td><small>{{ r.solution or '—' }}</small></td>
+        <td><small class="text-muted">{{ (r.resource_id or '').split('/')[-1] }}</small></td>
+        <td><small>{{ (r.last_updated or '')[:10] }}</small></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  <div class="alert alert-success">No recommendations found — or sync not yet run.</div>
+{% endif %}
+{% endblock %}

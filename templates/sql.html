@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}SQL / Elastic Pools — WTS Azure Manager{% endblock %}
+
+{% block content %}
+<h4 class="mb-3">SQL Servers &amp; Elastic Pools</h4>
+
+<!-- Filter -->
+<form class="row g-2 mb-3" method="get">
+  <div class="col-auto">
+    <select name="rg" class="form-select form-select-sm">
+      <option value="">All Resource Groups</option>
+      {% for rg in resource_groups %}
+        <option value="{{ rg }}" {% if rg == selected_rg %}selected{% endif %}>{{ rg }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-auto">
+    <button type="submit" class="btn btn-sm btn-primary">Filter</button>
+    <a href="{{ url_for('sql_view') }}" class="btn btn-sm btn-outline-secondary">Clear</a>
+  </div>
+</form>
+
+<!-- Elastic Pools -->
+<h5>Elastic Pools ({{ pools | length }})</h5>
+{% if pools %}
+<div class="table-responsive mb-4">
+  <table class="table table-hover table-sm align-middle">
+    <thead class="table-dark">
+      <tr><th>Pool</th><th>Server</th><th>Resource Group</th><th>Edition</th><th>SKU</th><th>Capacity</th><th>DBs</th><th>State</th></tr>
+    </thead>
+    <tbody>
+      {% for p in pools %}
+      <tr>
+        <td>{{ p.name }}</td>
+        <td>{{ p.server_name }}</td>
+        <td>{{ p.resource_group }}</td>
+        <td>{{ p.edition or '—' }}</td>
+        <td><code>{{ p.sku_name or '—' }}</code></td>
+        <td>{{ p.capacity or '—' }}</td>
+        <td>{{ p.db_count }}</td>
+        <td><span class="badge {% if p.state == 'Ready' %}bg-success{% else %}bg-warning text-dark{% endif %}">{{ p.state or '—' }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  <div class="alert alert-info">No elastic pools found.</div>
+{% endif %}
+
+<!-- SQL Servers -->
+<h5>SQL Servers ({{ servers | length }})</h5>
+{% if servers %}
+<div class="table-responsive mb-4">
+  <table class="table table-hover table-sm">
+    <thead class="table-dark">
+      <tr><th>Name</th><th>Resource Group</th><th>Location</th><th>State</th><th>FQDN</th></tr>
+    </thead>
+    <tbody>
+      {% for s in servers %}
+      <tr>
+        <td>{{ s.name }}</td>
+        <td>{{ s.resource_group }}</td>
+        <td>{{ s.location }}</td>
+        <td><span class="badge {% if s.state == 'Ready' %}bg-success{% else %}bg-secondary{% endif %}">{{ s.state or '—' }}</span></td>
+        <td><small>{{ s.fqdn or '—' }}</small></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<!-- Databases -->
+<h5>Databases ({{ databases | length }})</h5>
+{% if databases %}
+<div class="table-responsive">
+  <table class="table table-hover table-sm">
+    <thead class="table-dark">
+      <tr><th>Name</th><th>Server</th><th>Edition</th><th>Status</th><th>Elastic Pool</th></tr>
+    </thead>
+    <tbody>
+      {% for db in databases %}
+      <tr>
+        <td>{{ db.name }}</td>
+        <td>{{ db.server_name }}</td>
+        <td>{{ db.edition or '—' }}</td>
+        <td><span class="badge {% if db.status == 'Online' %}bg-success{% else %}bg-secondary{% endif %}">{{ db.status or '—' }}</span></td>
+        <td><small>{{ db.elastic_pool_id.split('/')[-1] if db.elastic_pool_id else '—' }}</small></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,15 @@
+flask>=3.0.0
+gunicorn>=21.2.0
+python-dotenv>=1.0.0
+azure-identity>=1.17.0
+azure-mgmt-resource>=23.0.0
+azure-mgmt-compute>=31.0.0
+azure-mgmt-network>=25.0.0
+azure-mgmt-sql>=3.0.0
+azure-mgmt-costmanagement>=4.0.0
+azure-mgmt-advisor>=9.0.0
+azure-mgmt-recoveryservicesbackup>=9.0.0
+azure-mgmt-recoveryservices>=3.0.0
+azure-mgmt-resourcehealth>=1.0.0b7
+azure-mgmt-resourcegraph>=8.0.0
+azure-monitor-query>=1.4.0,<2.0.0

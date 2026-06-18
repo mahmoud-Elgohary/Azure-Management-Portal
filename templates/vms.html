@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Virtual Machines — WTS Azure Manager{% endblock %}
+
+{% block content %}
+<h4 class="mb-3">Virtual Machines</h4>
+
+<!-- Filters -->
+<form class="row g-2 mb-3" method="get">
+  <div class="col-auto">
+    <select name="rg" class="form-select form-select-sm">
+      <option value="">All Resource Groups</option>
+      {% for rg in resource_groups %}
+        <option value="{{ rg }}" {% if rg == selected_rg %}selected{% endif %}>{{ rg }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-auto">
+    <input type="text" name="tag" class="form-control form-control-sm" placeholder="Tag filter…" value="{{ selected_tag or '' }}" />
+  </div>
+  <div class="col-auto">
+    <button type="submit" class="btn btn-sm btn-primary">Filter</button>
+    <a href="{{ url_for('vms') }}" class="btn btn-sm btn-outline-secondary">Clear</a>
+  </div>
+</form>
+
+{% if vms %}
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle">
+    <thead class="table-dark">
+      <tr>
+        <th>Name</th>
+        <th>Resource Group</th>
+        <th>Location</th>
+        <th>Size</th>
+        <th>OS</th>
+        <th>Power State</th>
+        <th>CPU %</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for vm in vms %}
+      <tr>
+        <td>{{ vm.name }}</td>
+        <td>{{ vm.resource_group }}</td>
+        <td>{{ vm.location }}</td>
+        <td><code>{{ vm.vm_size or '—' }}</code></td>
+        <td>{{ vm.os_type or '—' }}</td>
+        <td>
+          <span class="badge
+            {% if vm.power_state == 'running' %}bg-success
+            {% elif vm.power_state in ('deallocated','stopped') %}bg-secondary
+            {% else %}bg-warning text-dark{% endif %}">
+            {{ vm.power_state }}
+          </span>
+        </td>
+        <td>
+          {% if vm.cpu_pct is not none %}
+            <span class="badge
+              {% if vm.cpu_status == 'red' %}bg-danger
+              {% elif vm.cpu_status == 'amber' %}bg-warning text-dark
+              {% else %}bg-success{% endif %}">
+              {{ vm.cpu_pct }}%
+            </span>
+          {% else %}
+            <span class="text-muted">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  <div class="alert alert-info">No VMs found. Run a sync first.</div>
+{% endif %}
+{% endblock %}

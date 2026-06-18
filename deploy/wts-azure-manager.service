@@ -1,0 +1,21 @@
+[Unit]
+Description=WTS Azure Cloud Manager (gunicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=claude-code
+WorkingDirectory=/home/claude-code/wts-azure-manager
+EnvironmentFile=/home/claude-code/wts-azure-manager/.env
+ExecStart=/home/claude-code/wts-azure-manager/.venv/bin/gunicorn \
+    --workers 2 \
+    --bind 127.0.0.1:${APP_PORT} \
+    --timeout 120 \
+    --access-logfile - \
+    --error-logfile - \
+    app:app
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Backup Status — WTS Azure Manager{% endblock %}
+
+{% block content %}
+<h4 class="mb-3">Backup Status</h4>
+
+{% if problem_count > 0 %}
+  <div class="alert alert-danger">{{ problem_count }} VM(s) have failed or stale backups.</div>
+{% else %}
+  <div class="alert alert-success">All tracked VMs have recent successful backups.</div>
+{% endif %}
+
+{% if items %}
+<div class="table-responsive">
+  <table class="table table-hover table-sm align-middle">
+    <thead class="table-dark">
+      <tr><th>VM</th><th>Vault</th><th>Resource Group</th><th>Protection State</th><th>Last Backup</th><th>Last Status</th></tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+      {% set is_problem = item.last_backup_status != 'Completed' or not item.last_backup_time %}
+      <tr class="{% if is_problem %}table-danger{% endif %}">
+        <td>{{ item.vm_name or '—' }}</td>
+        <td>{{ item.vault_name }}</td>
+        <td>{{ item.resource_group }}</td>
+        <td>{{ item.protection_state or '—' }}</td>
+        <td>{{ (item.last_backup_time or '—')[:16].replace('T',' ') }}</td>
+        <td>
+          <span class="badge {% if item.last_backup_status == 'Completed' %}bg-success{% else %}bg-danger{% endif %}">
+            {{ item.last_backup_status or 'Unknown' }}
+          </span>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+  <div class="alert alert-info">No backup data. Ensure Recovery Services Reader role is assigned and sync has run.</div>
+{% endif %}
+{% endblock %}
