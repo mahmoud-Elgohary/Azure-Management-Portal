@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% block title %}Network Topology — WTS Azure Manager{% endblock %}
+{% block page_title %}Network Topology{% endblock %}
+
+{% block head %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
+{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-center gap-3 mb-3">
+  <div class="topo-legend">
+    <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#0078d4"></div> VM</div>
+    <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#7c3aed"></div> VNet</div>
+    <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#a78bfa"></div> Subnet</div>
+    <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#059669"></div> SQL</div>
+    <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#6b7280"></div> NIC</div>
+    <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#f59e0b"></div> Public IP</div>
+    <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#dc2626"></div> NSG</div>
+    <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#374151"></div> On-prem (logical)</div>
+  </div>
+  <div class="ms-auto d-flex gap-2">
+    <select id="layout-picker" class="form-select form-select-sm" style="width:auto">
+      <option value="cose">Force-directed</option>
+      <option value="breadthfirst">Hierarchical</option>
+      <option value="circle">Circle</option>
+      <option value="grid">Grid</option>
+    </select>
+    <button class="btn btn-sm btn-outline-secondary" onclick="fitGraph()"><i class="bi bi-fullscreen"></i> Fit</button>
+    <button class="btn btn-sm btn-outline-secondary" onclick="loadTopology()"><i class="bi bi-arrow-repeat"></i> Refresh</button>
+  </div>
+</div>
+
+<!-- Topology canvas (or fallback) -->
+<div id="topology-cy"></div>
+
+<!-- Fallback list (shown if Cytoscape or data fails) -->
+<div id="topology-fallback" style="display:none">
+  <div class="permission-banner mb-3">
+    <i class="bi bi-exclamation-triangle"></i>
+    <div>
+      <strong>Topology graph could not be rendered.</strong><br>
+      <span id="topo-error-detail">No network data available yet. Run a sync to populate topology data.</span>
+    </div>
+  </div>
+  <div id="topology-list"></div>
+</div>
+
+<!-- Node detail panel -->
+<div id="node-panel" class="card" style="display:none;position:fixed;bottom:1.5rem;right:1.5rem;width:280px;z-index:1100;box-shadow:0 4px 20px rgba(0,0,0,.15)">
+  <div class="card-header d-flex align-items-center">
+    <span id="node-panel-title" class="fw-bold"></span>
+    <button class="btn btn-sm btn-link ms-auto p-0 text-muted" onclick="document.getElementById('node-panel').style.display='none'">
+      <i class="bi bi-x-lg"></i>
+    </button>
+  </div>
+  <div class="card-body p-2" id="node-panel-body" style="font-size:.82rem"></div>
+</div>
+
+<!-- Edge legend -->
+<div class="mt-2 text-muted" style="font-size:.75rem">
+  <i class="bi bi-dash-lg"></i> Solid lines = API-derived (ARM/Resource Graph) &nbsp;·&nbsp;
+  <i class="bi bi-three-dots"></i> Dashed lines = logical (from topology_config.json)
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let cy = null;
+
+async function loadTopology() {
+  try {
+    const r = await fetch('/api/topology');
+    const data = await r.json();
+
+    if (data.error || (!data.nodes?.length && !data.edges?.length)) {
+      showFallback(data.error || 'No topology data. Sync the portal first — network resources (VNets, NICs, public IPs) must be synced.');
+      return;
+    }
+
+    if (data.nodes.length === 0) {
+      showFallback('No resources found in the database. Run a sync first.');
+      return;
+    }
+
+    renderCytoscape(data.nodes, data.edges || []);
+  } catch(e) {
+    showFallback('Failed to load topology: ' + e.message);
+  }
+}
+
+function renderCytoscape(nodes, edges) {
+  document.getElementById('topology-cy').style.display = '';
+  document.getElementById('topology-fallback').style.display = 'none';
+
+  const colorMap = {
+    vm: '#0078d4', vnet: '#7c3aed', subnet: '#a78bfa', sql: '#059669',
+    nic: '#6b7280', pip: '#f59e0b', nsg: '#dc2626', onprem: '#374151', default: '#9ca3af'
+  };
+  const shapeMap = {
+    vm: 'rectangle', vnet: 'round-rectangle', subnet: 'round-rectangle',
+    sql: 'diamond', nic: 'ellipse', pip: 'star', nsg: 'hexagon'
+  };
+
+  cy = cytoscape({
+    container: document.getElementById('topology-cy'),
+    elements: [...nodes, ...edges],
+    style: [
+      {
+        selector: 'node',
+        style: {
+          'background-color': n => colorMap[n.data('type')] || colorMap.default,
+          'label': 'data(label)',
+          'font-size': '10px',
+          'color': '#1a1a2e',
+          'text-valign': 'bottom',
+          'text-margin-y': '4px',
+          'shape': n => shapeMap[n.data('type')] || 'ellipse',
+          'width': n => ['vnet','subnet'].includes(n.data('type')) ? 50 : 30,
+          'height': n => ['vnet','subnet'].includes(n.data('type')) ? 50 : 30,
+          'border-width': 2,
+          'border-color': '#fff',
+          'padding': '8px',
+        }
+      },
+      {
+        selector: 'node[?logical]',
+        style: { 'border-style': 'dashed', 'border-color': '#6b7280', 'border-width': 2 }
+      },
+      {
+        selector: 'node:selected',
+        style: { 'border-color': '#0078d4', 'border-width': 3 }
+      },
+      {
+        selector: 'edge',
+        style: {
+          'width': 1.5,
+          'line-color': '#9ca3af',
+          'target-arrow-color': '#9ca3af',
+          'target-arrow-shape': 'triangle',
+          'curve-style': 'bezier',
+          'label': 'data(label)',
+          'font-size': '9px',
+          'text-rotation': 'autorotate',
+          'color': '#6b7280',
+        }
+      },
+      {
+        selector: 'edge[type="logical"]',
+        style: {
+          'line-style': 'dashed',
+          'line-color': '#6b7280',
+          'target-arrow-color': '#6b7280',
+        }
+      },
+      {
+        selector: 'edge[type="api"]',
+        style: { 'line-style': 'solid' }
+      }
+    ],
+    layout: { name: 'cose', idealEdgeLength: 100, nodeOverlap: 20, refresh: 20, fit: true, padding: 30, randomize: false, componentSpacing: 100, nodeRepulsion: 400000, edgeElasticity: 100, nestingFactor: 5, gravity: 80, numIter: 1000, initialTemp: 200, coolingFactor: 0.95, minTemp: 1.0 }
+  });
+
+  // Click node → show detail panel
+  cy.on('tap', 'node', function(e) {
+    const d = e.target.data();
+    showNodePanel(d);
+  });
+  cy.on('tap', function(e) {
+    if (e.target === cy) document.getElementById('node-panel').style.display = 'none';
+  });
+}
+
+function showNodePanel(d) {
+  const panel = document.getElementById('node-panel');
+  document.getElementById('node-panel-title').textContent = d.label || d.id;
+  const rows = Object.entries(d)
+    .filter(([k]) => !['id','label','parent'].includes(k))
+    .map(([k,v]) => `<div class="d-flex gap-2 mb-1"><span class="text-muted" style="min-width:70px">${k}</span><span>${String(v||'—')}</span></div>`);
+  let html = rows.join('');
+  if (d.url) html += `<a href="${d.url}" class="btn btn-sm btn-primary mt-2">View detail</a>`;
+  document.getElementById('node-panel-body').innerHTML = html;
+  panel.style.display = '';
+}
+
+function showFallback(msg) {
+  document.getElementById('topology-cy').style.display = 'none';
+  document.getElementById('topology-fallback').style.display = '';
+  document.getElementById('topo-error-detail').textContent = msg;
+
+  // Build a flat resource list as fallback
+  fetch('/api/topology').then(r => r.json()).then(data => {
+    if (!data.nodes?.length) return;
+    const grouped = {};
+    data.nodes.forEach(n => {
+      const t = n.data.type || 'other';
+      if (!grouped[t]) grouped[t] = [];
+      grouped[t].push(n.data);
+    });
+    const listHtml = Object.entries(grouped).map(([type, items]) =>
+      `<div class="mb-3">
+        <h6 class="text-muted text-uppercase" style="font-size:.72rem;letter-spacing:.05em">${type} (${items.length})</h6>
+        <div class="list-group list-group-flush border rounded">
+          ${items.map(item =>
+            `<div class="list-group-item list-group-item-action py-1 px-2" style="font-size:.83rem">
+              ${item.label || item.id}
+              ${item.url ? `<a href="${item.url}" class="float-end text-link small">Detail</a>` : ''}
+            </div>`
+          ).join('')}
+        </div>
+      </div>`
+    ).join('');
+    document.getElementById('topology-list').innerHTML = listHtml;
+  }).catch(() => {});
+}
+
+function fitGraph() { if (cy) cy.fit(30); }
+
+document.getElementById('layout-picker').addEventListener('change', function() {
+  if (cy) cy.layout({ name: this.value, fit: true, padding: 30 }).run();
+});
+
+loadTopology();
+</script>
+{% endblock %}

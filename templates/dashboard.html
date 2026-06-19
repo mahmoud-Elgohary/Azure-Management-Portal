@@ -1,49 +1,83 @@
 {% extends "base.html" %}
 {% block title %}Dashboard — WTS Azure Manager{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
 
 {% block content %}
-<h4 class="mb-3">Dashboard</h4>
 
-<div class="row g-3">
+<!-- KPI row -->
+<div class="row g-3 mb-4">
 
-  <!-- VMs by power state -->
-  <div class="col-md-4">
-    <div class="card h-100">
-      <div class="card-header">Virtual Machines</div>
-      <div class="card-body">
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-primary">{{ vm_total or 0 }}</div>
+      <div class="kpi-label">Virtual Machines</div>
+      <div class="kpi-sub">
         {% if vm_power %}
-          <p class="display-6">{{ vm_total }}</p>
-          <ul class="list-unstyled mb-0">
-            {% for state, cnt in vm_power.items() %}
-              <li>
-                <span class="badge
-                  {% if state == 'running' %}bg-success
-                  {% elif state == 'deallocated' or state == 'stopped' %}bg-secondary
-                  {% else %}bg-warning text-dark{% endif %}">
-                  {{ state }}
-                </span> {{ cnt }}
-              </li>
-            {% endfor %}
-          </ul>
-        {% else %}
-          <span class="text-muted">No data</span>
-        {% endif %}
-        <a href="{{ url_for('vms') }}" class="btn btn-sm btn-outline-primary mt-3">View VMs</a>
+          {% for state, cnt in vm_power.items() %}
+            <span class="badge {% if state == 'running' %}bg-success{% elif state in ('deallocated','stopped') %}bg-secondary{% else %}bg-warning text-dark{% endif %} me-1">{{ state }} {{ cnt }}</span>
+          {% endfor %}
+        {% else %}no data{% endif %}
       </div>
     </div>
   </div>
 
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-success">€{{ mtd_cost or '—' }}</div>
+      <div class="kpi-label">Month-to-Date Cost</div>
+      <div class="kpi-sub"><a href="{{ url_for('cost_view') }}" class="text-link">View breakdown</a></div>
+    </div>
+  </div>
+
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value {% if backup_problems %}text-danger{% else %}text-success{% endif %}">
+        {{ backup_problems or 0 }}
+      </div>
+      <div class="kpi-label">Backup Issues</div>
+      <div class="kpi-sub">
+        {% if backup_problems %}<a href="{{ url_for('backup_view') }}" class="text-link text-danger">View backups</a>
+        {% else %}All backups OK{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      {% set unavailable = health_summary.get('Unavailable', 0) %}
+      <div class="kpi-value {% if unavailable %}text-danger{% else %}text-success{% endif %}">
+        {{ unavailable }}
+      </div>
+      <div class="kpi-label">Unavailable Resources</div>
+      <div class="kpi-sub">
+        {% if health_summary %}
+          {% for state, cnt in health_summary.items() %}
+            <span class="badge {% if state == 'Available' %}bg-success{% elif state == 'Unavailable' %}bg-danger{% else %}bg-warning text-dark{% endif %} me-1">{{ state }} {{ cnt }}</span>
+          {% endfor %}
+        {% else %}no data{% endif %}
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Details row -->
+<div class="row g-3">
+
   <!-- Elastic pools -->
   <div class="col-md-4">
     <div class="card h-100">
-      <div class="card-header">SQL Elastic Pools</div>
+      <div class="card-header"><i class="bi bi-database me-1"></i>SQL Elastic Pools</div>
       <div class="card-body">
         {% if pools %}
-          <p class="display-6">{{ pools | length }}</p>
-          {% for pool in pools[:4] %}
-            <div class="small">{{ pool.name }} &mdash; {{ pool.capacity or '?' }} cap, {{ pool.db_count }} DBs</div>
+          <p class="kpi-value">{{ pools | length }}</p>
+          {% for pool in pools[:5] %}
+            <div class="small mb-1">
+              <span class="fw-500">{{ pool.name }}</span>
+              <span class="text-muted"> · {{ pool.capacity or '?' }} cap, {{ pool.db_count }} DBs</span>
+            </div>
           {% endfor %}
-          {% if pools | length > 4 %}<div class="small text-muted">… and {{ pools|length - 4 }} more</div>{% endif %}
+          {% if pools | length > 5 %}<div class="small text-muted">… and {{ pools|length - 5 }} more</div>{% endif %}
         {% else %}
           <span class="text-muted">No elastic pools</span>
         {% endif %}
@@ -52,75 +86,52 @@
     </div>
   </div>
 
-  <!-- MTD Cost -->
-  <div class="col-md-4">
-    <div class="card h-100">
-      <div class="card-header">Month-to-Date Cost</div>
-      <div class="card-body">
-        <p class="display-6">${{ mtd_cost }}</p>
-        <a href="{{ url_for('cost_view') }}" class="btn btn-sm btn-outline-primary mt-3">View Cost</a>
-      </div>
-    </div>
-  </div>
-
   <!-- Advisor -->
   <div class="col-md-4">
     <div class="card h-100">
-      <div class="card-header">Advisor Recommendations</div>
+      <div class="card-header"><i class="bi bi-lightbulb me-1"></i>Advisor Recommendations</div>
       <div class="card-body">
         {% if advisor_cats %}
-          {% for cat, cnt in advisor_cats.items() %}
-            <span class="badge
-              {% if cat == 'Cost' %}bg-warning text-dark
-              {% elif cat == 'Security' %}bg-danger
-              {% elif cat == 'Reliability' %}bg-primary
-              {% elif cat == 'Performance' %}bg-info text-dark
-              {% else %}bg-secondary{% endif %} me-1">
-              {{ cat }}: {{ cnt }}
-            </span>
+          <div class="d-flex flex-wrap gap-2 mb-3">
+          {% for cat, cnt in advisor_cats.items() | sort %}
+            <div class="text-center">
+              <div class="kpi-value" style="font-size:1.4rem">{{ cnt }}</div>
+              <span class="badge
+                {% if cat == 'Cost' %}bg-warning text-dark
+                {% elif cat == 'Security' %}bg-danger
+                {% elif cat == 'Reliability' %}bg-primary
+                {% elif cat == 'Performance' %}bg-info text-dark
+                {% else %}bg-secondary{% endif %}">{{ cat }}</span>
+            </div>
           {% endfor %}
+          </div>
         {% else %}
           <span class="text-muted">No recommendations</span>
         {% endif %}
-        <br/><a href="{{ url_for('advisor_view') }}" class="btn btn-sm btn-outline-primary mt-3">View Advisor</a>
+        <a href="{{ url_for('advisor_view') }}" class="btn btn-sm btn-outline-primary mt-2">View Advisor</a>
       </div>
     </div>
   </div>
 
-  <!-- Backup -->
+  <!-- VM power state detail -->
   <div class="col-md-4">
     <div class="card h-100">
-      <div class="card-header">Backup Status</div>
+      <div class="card-header"><i class="bi bi-server me-1"></i>Virtual Machine States</div>
       <div class="card-body">
-        {% if backup_problems > 0 %}
-          <p class="text-danger fw-bold">{{ backup_problems }} VM(s) with failed or stale backups</p>
-        {% else %}
-          <p class="text-success">All backups OK</p>
-        {% endif %}
-        <a href="{{ url_for('backup_view') }}" class="btn btn-sm btn-outline-primary mt-3">View Backups</a>
-      </div>
-    </div>
-  </div>
-
-  <!-- Resource Health -->
-  <div class="col-md-4">
-    <div class="card h-100">
-      <div class="card-header">Resource Health</div>
-      <div class="card-body">
-        {% if health_summary %}
-          {% for state, cnt in health_summary.items() %}
-            <span class="badge
-              {% if state == 'Available' %}bg-success
-              {% elif state == 'Unavailable' %}bg-danger
-              {% elif state == 'Degraded' %}bg-warning text-dark
-              {% else %}bg-secondary{% endif %} me-1">
-              {{ state }}: {{ cnt }}
-            </span>
+        {% if vm_power %}
+          {% for state, cnt in vm_power.items() %}
+          <div class="d-flex align-items-center justify-content-between mb-2">
+            <div class="d-flex align-items-center gap-2">
+              <div class="status-dot {% if state == 'running' %}green{% elif state in ('deallocated','stopped') %}gray{% else %}amber{% endif %}"></div>
+              {{ state }}
+            </div>
+            <strong>{{ cnt }}</strong>
+          </div>
           {% endfor %}
         {% else %}
-          <span class="text-muted">No health data</span>
+          <span class="text-muted">No VMs found</span>
         {% endif %}
-        <br/><a href="{{ url_for('health_view') }}" class="btn btn-sm btn-outline-primary mt-3">View Health</a>
+        <a href="{{ url_for('vms') }}" class="btn btn-sm btn-outline-primary mt-2">View VMs</a>
       </div>
     </div>
   </div>

@@ -1,0 +1,52 @@
+[
+  {
+    "name": "Azure Activity — Failed operations",
+    "description": "All failed ARM operations in the last 24 h",
+    "query": "AzureActivity\n| where ActivityStatusValue == 'Failed'\n| project TimeGenerated, OperationNameValue, ResourceGroup, ResourceId, Caller, Properties\n| top 50 by TimeGenerated desc"
+  },
+  {
+    "name": "VM errors (Event log)",
+    "description": "Windows Event Log errors from all VMs",
+    "query": "Event\n| where EventLevelName == 'Error'\n| project TimeGenerated, Computer, EventID, RenderedDescription\n| top 50 by TimeGenerated desc"
+  },
+  {
+    "name": "Failed sign-ins (Syslog / Security)",
+    "description": "Failed Windows authentication events (Event ID 4625)",
+    "query": "SecurityEvent\n| where EventID == 4625\n| project TimeGenerated, Computer, Account, IpAddress, LogonTypeName, FailureReason\n| top 50 by TimeGenerated desc"
+  },
+  {
+    "name": "Syslog — errors and warnings",
+    "description": "Linux syslog entries at Error or Warning level",
+    "query": "Syslog\n| where SeverityLevel in ('err', 'crit', 'alert', 'emerg', 'warning')\n| project TimeGenerated, Computer, Facility, SeverityLevel, SyslogMessage\n| top 50 by TimeGenerated desc"
+  },
+  {
+    "name": "NSG flow — denied traffic",
+    "description": "Denied network flows from NSG flow logs (requires NSG flow logs enabled)",
+    "query": "AzureNetworkAnalytics_CL\n| where FlowStatus_s == 'D'\n| project TimeGenerated, SrcIP_s, DestIP_s, DestPort_d, L7Protocol_s, NSGRule_s\n| top 100 by TimeGenerated desc"
+  },
+  {
+    "name": "SQL Audit — failed logins",
+    "description": "SQL Server failed login attempts (requires SQL Audit to Log Analytics)",
+    "query": "AzureDiagnostics\n| where ResourceType == 'SERVERS' and Category == 'SQLSecurityAuditEvents'\n| where action_name_s == 'LOGIN FAILED'\n| project TimeGenerated, LogicalServerName_s, client_ip_s, database_principal_name_s, server_principal_name_s\n| top 50 by TimeGenerated desc"
+  },
+  {
+    "name": "WAF — blocked requests",
+    "description": "Application Gateway WAF blocks (requires WAF diag settings to workspace)",
+    "query": "AzureDiagnostics\n| where ResourceType == 'APPLICATIONGATEWAYS' and OperationName == 'ApplicationGatewayFirewall'\n| where action_s == 'Blocked'\n| project TimeGenerated, hostname_s, requestUri_s, ruleGroup_s, ruleId_s, clientIp_s\n| top 100 by TimeGenerated desc"
+  },
+  {
+    "name": "Heartbeat — stale agents",
+    "description": "Agents that haven't sent a heartbeat in the last 15 minutes",
+    "query": "Heartbeat\n| summarize LastHeartbeat = max(TimeGenerated) by Computer\n| where LastHeartbeat < ago(15m)\n| order by LastHeartbeat asc"
+  },
+  {
+    "name": "AzureActivity — resource changes",
+    "description": "All resource write / delete operations today",
+    "query": "AzureActivity\n| where ActivityStatusValue == 'Succeeded' and OperationNameValue has_any ('write', 'delete')\n| project TimeGenerated, OperationNameValue, ResourceGroup, ResourceId, Caller\n| top 50 by TimeGenerated desc"
+  },
+  {
+    "name": "VM performance — top CPU",
+    "description": "Top 10 VMs by average CPU over last hour",
+    "query": "Perf\n| where ObjectName == 'Processor' and CounterName == '% Processor Time' and InstanceName == '_Total'\n| where TimeGenerated >= ago(1h)\n| summarize AvgCPU = avg(CounterValue) by Computer\n| top 10 by AvgCPU desc"
+  }
+]

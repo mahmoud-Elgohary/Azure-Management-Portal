@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}{{ server.name }} — WTS Azure Manager{% endblock %}
+{% block page_title %}
+  <a href="{{ url_for('sql_view') }}" class="text-muted text-decoration-none">SQL / Elastic Pools</a>
+  <i class="bi bi-chevron-right mx-1 text-muted" style="font-size:.7rem"></i>
+  {{ server.name }}
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-3">
+  <i class="bi bi-database fs-4 text-success"></i>
+  <div>
+    <h5 class="mb-0">{{ server.name }}</h5>
+    <small class="text-muted">{{ server.resource_group }} · {{ server.location }}</small>
+  </div>
+  <span class="badge {% if server.state == 'Ready' %}bg-success{% else %}bg-secondary{% endif %} ms-1">{{ server.state or '—' }}</span>
+</div>
+
+<ul class="nav detail-tabs mb-3" id="sql-tabs">
+  <li class="nav-item"><a class="nav-link active" href="#" data-tab="overview">Overview</a></li>
+  <li class="nav-item"><a class="nav-link" href="#" data-tab="databases">Databases ({{ databases|length }})</a></li>
+  <li class="nav-item"><a class="nav-link" href="#" data-tab="pools">Elastic Pools ({{ pools|length }})</a></li>
+  <li class="nav-item"><a class="nav-link" href="#" data-tab="advisor">Advisor{% if advisor_recs %} <span class="badge bg-warning text-dark ms-1">{{ advisor_recs|length }}</span>{% endif %}</a></li>
+  <li class="nav-item"><a class="nav-link" href="#" data-tab="health">Health</a></li>
+</ul>
+
+<div class="tab-panel active" id="tab-overview">
+  <div class="card" style="max-width:600px">
+    <div class="card-header"><i class="bi bi-info-circle me-1"></i>Server Properties</div>
+    <div class="card-body p-0">
+      <table class="table table-sm mb-0">
+        <tbody>
+          <tr><th class="ps-3" style="width:35%">Server ID</th><td><code style="font-size:.72rem;word-break:break-all">{{ server.server_id }}</code></td></tr>
+          <tr><th class="ps-3">FQDN</th><td><code>{{ server.fqdn or '—' }}</code></td></tr>
+          <tr><th class="ps-3">Admin Login</th><td>{{ server.admin_login or '—' }}</td></tr>
+          <tr><th class="ps-3">Location</th><td>{{ server.location }}</td></tr>
+          <tr><th class="ps-3">Resource Group</th><td>{{ server.resource_group }}</td></tr>
+          <tr><th class="ps-3">Subscription</th><td><code>{{ server.subscription_id[-8:] if server.subscription_id else '—' }}</code></td></tr>
+          <tr><th class="ps-3">Tags</th><td><small>{{ server.tags or '—' }}</small></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="tab-panel" id="tab-databases">
+  {% if databases %}
+  <div class="table-responsive">
+    <table class="table table-sm table-hover">
+      <thead class="table-light"><tr><th>Name</th><th>Edition</th><th>Status</th><th>Elastic Pool</th></tr></thead>
+      <tbody>
+        {% for db in databases %}
+        <tr>
+          <td>{{ db.name }}</td>
+          <td>{{ db.edition or '—' }}</td>
+          <td><span class="badge {% if db.status == 'Online' %}bg-success{% else %}bg-secondary{% endif %}">{{ db.status or '—' }}</span></td>
+          <td><small>{{ db.elastic_pool_id.split('/')[-1] if db.elastic_pool_id else '—' }}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="no-data-banner"><i class="bi bi-database-x"></i>No databases found for this server.</div>
+  {% endif %}
+</div>
+
+<div class="tab-panel" id="tab-pools">
+  {% if pools %}
+  <div class="table-responsive">
+    <table class="table table-sm table-hover">
+      <thead class="table-light"><tr><th>Pool</th><th>Edition</th><th>SKU</th><th>Capacity</th><th>DBs</th><th>State</th></tr></thead>
+      <tbody>
+        {% for p in pools %}
+        <tr>
+          <td>{{ p.name }}</td>
+          <td>{{ p.edition or '—' }}</td>
+          <td><code>{{ p.sku_name or '—' }}</code></td>
+          <td>{{ p.capacity or '—' }}</td>
+          <td>{{ p.db_count }}</td>
+          <td><span class="badge {% if p.state == 'Ready' %}bg-success{% else %}bg-warning text-dark{% endif %}">{{ p.state or '—' }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="no-data-banner"><i class="bi bi-layers"></i>No elastic pools on this server.</div>
+  {% endif %}
+</div>
+
+<div class="tab-panel" id="tab-advisor">
+  {% if advisor_recs %}
+  <div class="table-responsive">
+    <table class="table table-sm table-hover">
+      <thead class="table-light"><tr><th>Category</th><th>Impact</th><th>Recommendation</th></tr></thead>
+      <tbody>
+        {% for r in advisor_recs %}
+        <tr>
+          <td><span class="badge {% if r.category == 'Cost' %}bg-warning text-dark{% elif r.category == 'Security' %}bg-danger{% elif r.category == 'Reliability' %}bg-primary{% else %}bg-info text-dark{% endif %}">{{ r.category }}</span></td>
+          <td>{{ r.impact }}</td>
+          <td>{{ r.short_description }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="no-data-banner"><i class="bi bi-lightbulb"></i>No Advisor recommendations for this server.</div>
+  {% endif %}
+</div>
+
+<div class="tab-panel" id="tab-health">
+  {% if health_item %}
+  <div class="card" style="max-width:500px">
+    <div class="card-body">
+      <table class="table table-sm mb-0">
+        <tbody>
+          <tr><th style="width:35%">State</th>
+            <td><span class="badge {% if health_item.availability_state == 'Available' %}bg-success{% elif health_item.availability_state == 'Unavailable' %}bg-danger{% else %}bg-warning text-dark{% endif %}">{{ health_item.availability_state }}</span></td></tr>
+          <tr><th>Summary</th><td>{{ health_item.summary or '—' }}</td></tr>
+          <tr><th>Reason</th><td>{{ health_item.reason_type or '—' }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="no-data-banner"><i class="bi bi-heart-pulse"></i>No resource health record found for this server.</div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('#sql-tabs .nav-link').forEach(link => {
+  link.addEventListener('click', function(e) {
+    e.preventDefault();
+    document.querySelectorAll('#sql-tabs .nav-link').forEach(l => l.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    this.classList.add('active');
+    document.getElementById('tab-' + this.dataset.tab).classList.add('active');
+  });
+});
+</script>
+{% endblock %}

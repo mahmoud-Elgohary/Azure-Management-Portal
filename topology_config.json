@@ -1,0 +1,5 @@
+{
+  "_comment": "Logical (config-derived) topology nodes and edges. Drawn dashed — not from ARM. Edit this file to add on-prem nodes, VPN tunnels, or app→DB links that aren't expressed in Azure ARM resources.",
+  "nodes": [],
+  "edges": []
+}

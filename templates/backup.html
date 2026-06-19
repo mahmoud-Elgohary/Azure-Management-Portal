@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Backup Status — WTS Azure Manager{% endblock %}
+{% block page_title %}Backup Status{% endblock %}
 
 {% block content %}
-<h4 class="mb-3">Backup Status</h4>
+<h5 class="mb-3">Backup Status</h5>
 
 {% if problem_count > 0 %}
   <div class="alert alert-danger">{{ problem_count }} VM(s) have failed or stale backups.</div>

@@ -27,6 +27,7 @@ def get_auth_url(redirect_uri: str, state: str) -> str:
         scopes=_SCOPES,
         redirect_uri=redirect_uri,
         state=state,
+        prompt="login",  # force Entra credential screen even with active SSO session
     )
 
 

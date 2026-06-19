@@ -19,7 +19,8 @@ from azure_client import (
     health,
     cost,
     monitor,
-    resource_graph,
+    network,
+    alerts as alerts_client,
 )
 
 
@@ -159,11 +160,92 @@ def _upsert_metrics(conn, rows: list[dict]):
         )
 
 
+def _upsert_network(conn, data: dict, ts: str):
+    for r in data.get("vnets", []):
+        if "_error" in r:
+            print(f"  [warn] VNet error: {r['_error']}")
+            continue
+        conn.execute(
+            """INSERT INTO vnets (vnet_id,name,resource_group,subscription_id,location,address_space,synced_at)
+               VALUES (:vnet_id,:name,:resource_group,:subscription_id,:location,:address_space,:synced_at)
+               ON CONFLICT(vnet_id) DO UPDATE SET
+                 name=excluded.name, resource_group=excluded.resource_group,
+                 address_space=excluded.address_space, synced_at=excluded.synced_at""",
+            {**r, "synced_at": ts},
+        )
+    for r in data.get("subnets", []):
+        if "_error" in r:
+            continue
+        conn.execute(
+            """INSERT INTO subnets (subnet_id,name,vnet_id,resource_group,address_prefix,nsg_id,synced_at)
+               VALUES (:subnet_id,:name,:vnet_id,:resource_group,:address_prefix,:nsg_id,:synced_at)
+               ON CONFLICT(subnet_id) DO UPDATE SET
+                 name=excluded.name, address_prefix=excluded.address_prefix, nsg_id=excluded.nsg_id, synced_at=excluded.synced_at""",
+            {**r, "synced_at": ts},
+        )
+    for r in data.get("nics", []):
+        if "_error" in r:
+            continue
+        conn.execute(
+            """INSERT INTO nics (nic_id,name,resource_group,subscription_id,vm_id,subnet_id,private_ip,public_ip_id,synced_at)
+               VALUES (:nic_id,:name,:resource_group,:subscription_id,:vm_id,:subnet_id,:private_ip,:public_ip_id,:synced_at)
+               ON CONFLICT(nic_id) DO UPDATE SET
+                 vm_id=excluded.vm_id, subnet_id=excluded.subnet_id,
+                 private_ip=excluded.private_ip, public_ip_id=excluded.public_ip_id, synced_at=excluded.synced_at""",
+            {**r, "synced_at": ts},
+        )
+    for r in data.get("public_ips", []):
+        if "_error" in r:
+            continue
+        conn.execute(
+            """INSERT INTO public_ips (pip_id,name,resource_group,subscription_id,ip_address,allocation_method,nic_id,synced_at)
+               VALUES (:pip_id,:name,:resource_group,:subscription_id,:ip_address,:allocation_method,:nic_id,:synced_at)
+               ON CONFLICT(pip_id) DO UPDATE SET
+                 ip_address=excluded.ip_address, nic_id=excluded.nic_id, synced_at=excluded.synced_at""",
+            {**r, "synced_at": ts},
+        )
+    for r in data.get("nsgs", []):
+        if "_error" in r:
+            continue
+        conn.execute(
+            """INSERT INTO nsgs (nsg_id,name,resource_group,subscription_id,location,synced_at)
+               VALUES (:nsg_id,:name,:resource_group,:subscription_id,:location,:synced_at)
+               ON CONFLICT(nsg_id) DO UPDATE SET name=excluded.name, synced_at=excluded.synced_at""",
+            {**r, "synced_at": ts},
+        )
+    for r in data.get("peerings", []):
+        if "_error" in r:
+            continue
+        conn.execute(
+            """INSERT INTO vnet_peerings (peering_id,src_vnet_id,dst_vnet_id,name,state,synced_at)
+               VALUES (:peering_id,:src_vnet_id,:dst_vnet_id,:name,:state,:synced_at)
+               ON CONFLICT(peering_id) DO UPDATE SET state=excluded.state, synced_at=excluded.synced_at""",
+            {**r, "synced_at": ts},
+        )
+
+
+def _upsert_alerts(conn, rows: list[dict], ts: str):
+    conn.execute("DELETE FROM alerts")
+    for r in rows:
+        if "_error" in r:
+            print(f"  [warn] Alerts error: {r['_error']}")
+            continue
+        conn.execute(
+            """INSERT OR REPLACE INTO alerts
+               (alert_id,subscription_id,severity,alert_rule,target_resource,target_resource_name,
+                monitor_condition,description,fired_time,resolved_time,synced_at)
+               VALUES (:alert_id,:subscription_id,:severity,:alert_rule,:target_resource,:target_resource_name,
+                :monitor_condition,:description,:fired_time,:resolved_time,:synced_at)""",
+            {**r, "synced_at": ts},
+        )
+
+
 def run_sync():
     init_db()
     ts = _now()
     print(f"[sync] Starting at {ts}")
     errors = []
+    total_sections = 8  # VMs, SQL, Advisor, Backup, Health, Cost, Network, Alerts
 
     conn = get_db()
 
@@ -172,14 +254,16 @@ def run_sync():
     try:
         vm_rows = compute.fetch_all_vms()
         _upsert_vms(conn, vm_rows, ts)
-        print(f"  → {len([r for r in vm_rows if '_error' not in r])} VMs cached")
+        vm_ok = len([r for r in vm_rows if "_error" not in r])
+        print(f"  → {vm_ok} VMs cached")
 
-        # VM metrics
-        print("[sync] Fetching VM metrics …")
+        # VM metrics (last 2 hours per sync; lazy-load per-resource for longer windows)
+        print("[sync] Fetching VM metrics (last 2 h) …")
         vm_ids = [r["vm_id"] for r in vm_rows if "_error" not in r]
         for vm_id in vm_ids:
             metric_rows = monitor.fetch_vm_metrics(vm_id, hours=2)
             _upsert_metrics(conn, metric_rows)
+        print(f"  → metrics fetched for {len(vm_ids)} VMs")
     except Exception as exc:
         err = f"VMs: {exc}"
         print(f"  [error] {err}")
@@ -242,7 +326,33 @@ def run_sync():
         print(f"  [error] {err}")
         errors.append(err)
 
-    status = "error" if len(errors) == 6 else ("partial" if errors else "ok")
+    # Network topology
+    print("[sync] Fetching network topology (VNets, subnets, NICs, public IPs, NSGs) …")
+    try:
+        net_data = network.fetch_all_network()
+        _upsert_network(conn, net_data, ts)
+        ok_vnets = len([r for r in net_data["vnets"] if "_error" not in r])
+        ok_nics  = len([r for r in net_data["nics"]  if "_error" not in r])
+        ok_pips  = len([r for r in net_data["public_ips"] if "_error" not in r])
+        print(f"  → {ok_vnets} VNets, {ok_nics} NICs, {ok_pips} public IPs")
+    except Exception as exc:
+        err = f"Network: {exc}"
+        print(f"  [error] {err}")
+        errors.append(err)
+
+    # Azure Monitor Alerts
+    print("[sync] Fetching Azure Monitor alerts …")
+    try:
+        alert_rows = alerts_client.fetch_all_alerts()
+        _upsert_alerts(conn, alert_rows, ts)
+        ok_alerts = len([r for r in alert_rows if "_error" not in r])
+        print(f"  → {ok_alerts} alert instances")
+    except Exception as exc:
+        err = f"Alerts: {exc}"
+        print(f"  [error] {err}")
+        errors.append(err)
+
+    status = "error" if len(errors) == total_sections else ("partial" if errors else "ok")
     conn.execute(
         "INSERT INTO sync_log (synced_at,status,detail) VALUES (?,?,?)",
         (ts, status, "; ".join(errors) if errors else None),

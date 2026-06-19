@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+{% block title %}{{ vm.name }} — WTS Azure Manager{% endblock %}
+{% block page_title %}
+  <a href="{{ url_for('vms') }}" class="text-muted text-decoration-none">Virtual Machines</a>
+  <i class="bi bi-chevron-right mx-1 text-muted" style="font-size:.7rem"></i>
+  {{ vm.name }}
+{% endblock %}
+
+{% block content %}
+<!-- VM header bar -->
+<div class="d-flex align-items-center gap-3 mb-3">
+  <div class="d-flex align-items-center gap-2">
+    <i class="bi bi-server fs-4 text-primary"></i>
+    <div>
+      <h5 class="mb-0">{{ vm.name }}</h5>
+      <small class="text-muted">{{ vm.resource_group }} · {{ vm.location }}</small>
+    </div>
+  </div>
+  <span class="badge {% if vm.power_state == 'running' %}bg-success{% elif vm.power_state in ('deallocated','stopped') %}bg-secondary{% else %}bg-warning text-dark{% endif %} ms-1">
+    {{ vm.power_state }}
+  </span>
+</div>
+
+<!-- Sub-tabs -->
+<ul class="nav detail-tabs mb-3" id="vm-tabs">
+  <li class="nav-item"><a class="nav-link active" href="#" data-tab="overview">Overview</a></li>
+  <li class="nav-item"><a class="nav-link" href="#" data-tab="metrics">Metrics</a></li>
+  <li class="nav-item"><a class="nav-link" href="#" data-tab="advisor">
+    Advisor
+    {% if advisor_recs %}<span class="badge bg-warning text-dark ms-1">{{ advisor_recs|length }}</span>{% endif %}
+  </a></li>
+  <li class="nav-item"><a class="nav-link" href="#" data-tab="backup">Backup</a></li>
+  <li class="nav-item"><a class="nav-link" href="#" data-tab="health">Health</a></li>
+  <li class="nav-item"><a class="nav-link" href="#" data-tab="logs">Logs</a></li>
+</ul>
+
+<!-- ── Overview tab ──────────────────────────────────────────────────── -->
+<div class="tab-panel active" id="tab-overview">
+  <div class="row g-3">
+    <div class="col-md-6">
+      <div class="card">
+        <div class="card-header"><i class="bi bi-info-circle me-1"></i>Properties</div>
+        <div class="card-body p-0">
+          <table class="table table-sm mb-0">
+            <tbody>
+              <tr><th class="ps-3" style="width:38%">VM ID</th><td><code style="font-size:.75rem;word-break:break-all">{{ vm.vm_id }}</code></td></tr>
+              <tr><th class="ps-3">Size</th><td><code>{{ vm.vm_size or '—' }}</code></td></tr>
+              <tr><th class="ps-3">OS Type</th><td>{{ vm.os_type or '—' }}</td></tr>
+              <tr><th class="ps-3">Power State</th><td>{{ vm.power_state }}</td></tr>
+              <tr><th class="ps-3">Location</th><td>{{ vm.location }}</td></tr>
+              <tr><th class="ps-3">Resource Group</th><td>{{ vm.resource_group }}</td></tr>
+              <tr><th class="ps-3">Subscription</th><td><code>{{ vm.subscription_id[-8:] if vm.subscription_id else '—' }}</code></td></tr>
+              <tr><th class="ps-3">Tags</th><td><small>{{ vm.tags or '—' }}</small></td></tr>
+              <tr><th class="ps-3">Last Synced</th><td><small>{{ vm.synced_at[:19].replace('T',' ') if vm.synced_at else '—' }} UTC</small></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <!-- Quick CPU sparkline -->
+      <div class="card mb-3">
+        <div class="card-header"><i class="bi bi-cpu me-1"></i>Latest CPU (24 h)</div>
+        <div class="card-body">
+          <div class="metric-chart-wrap"><canvas id="cpu-mini-chart"></canvas></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Metrics tab ────────────────────────────────────────────────────── -->
+<div class="tab-panel" id="tab-metrics">
+  <div class="card">
+    <div class="card-header d-flex align-items-center gap-2">
+      <i class="bi bi-graph-up me-1"></i> Metrics
+      <select id="metric-picker" class="form-select form-select-sm ms-auto" style="width:auto">
+        <option value="Percentage CPU">Percentage CPU</option>
+        <option value="Available Memory Bytes">Available Memory Bytes</option>
+        <option value="Disk Read Bytes">Disk Read Bytes</option>
+        <option value="Disk Write Bytes">Disk Write Bytes</option>
+        <option value="Network In Total">Network In Total</option>
+        <option value="Network Out Total">Network Out Total</option>
+      </select>
+    </div>
+    <div class="card-body">
+      <div style="position:relative;height:280px"><canvas id="metric-chart"></canvas></div>
+      <div id="metric-no-data" class="no-data-banner mt-3" style="display:none">
+        <i class="bi bi-bar-chart-line"></i>
+        No metric data found for this VM. Metrics are pulled during sync (last 2 hours per sync).
+        Run a sync to refresh.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Advisor tab ────────────────────────────────────────────────────── -->
+<div class="tab-panel" id="tab-advisor">
+  {% if advisor_recs %}
+  <div class="table-responsive">
+    <table class="table table-sm table-hover">
+      <thead class="table-light"><tr><th>Category</th><th>Impact</th><th>Recommendation</th></tr></thead>
+      <tbody>
+        {% for r in advisor_recs %}
+        <tr>
+          <td><span class="badge
+            {% if r.category == 'Cost' %}bg-warning text-dark
+            {% elif r.category == 'Security' %}bg-danger
+            {% elif r.category == 'Reliability' %}bg-primary
+            {% else %}bg-info text-dark{% endif %}">{{ r.category }}</span></td>
+          <td>{{ r.impact }}</td>
+          <td>{{ r.short_description }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="no-data-banner">
+    <i class="bi bi-lightbulb"></i>
+    No Advisor recommendations for this VM.
+  </div>
+  {% endif %}
+</div>
+
+<!-- ── Backup tab ─────────────────────────────────────────────────────── -->
+<div class="tab-panel" id="tab-backup">
+  {% if backup_item %}
+  <div class="card">
+    <div class="card-body">
+      <table class="table table-sm mb-0">
+        <tbody>
+          <tr><th style="width:35%">Vault</th><td>{{ backup_item.vault_name or '—' }}</td></tr>
+          <tr><th>Protection State</th><td>{{ backup_item.protection_state or '—' }}</td></tr>
+          <tr><th>Last Backup Status</th>
+            <td><span class="badge {% if backup_item.last_backup_status == 'Completed' %}bg-success{% else %}bg-danger{% endif %}">
+              {{ backup_item.last_backup_status or 'Unknown' }}
+            </span></td></tr>
+          <tr><th>Last Backup Time</th><td>{{ backup_item.last_backup_time[:19].replace('T',' ') if backup_item.last_backup_time else '—' }} UTC</td></tr>
+          <tr><th>Resource Group</th><td>{{ backup_item.resource_group or '—' }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="no-data-banner">
+    <i class="bi bi-shield-x"></i>
+    No backup record found for this VM. Either backup is not configured, or sync hasn't run yet.
+  </div>
+  {% endif %}
+</div>
+
+<!-- ── Health tab ─────────────────────────────────────────────────────── -->
+<div class="tab-panel" id="tab-health">
+  {% if health_item %}
+  <div class="card">
+    <div class="card-body">
+      <table class="table table-sm mb-0">
+        <tbody>
+          <tr><th style="width:35%">Availability State</th>
+            <td><span class="badge {% if health_item.availability_state == 'Available' %}bg-success{% elif health_item.availability_state == 'Unavailable' %}bg-danger{% else %}bg-warning text-dark{% endif %}">
+              {{ health_item.availability_state }}
+            </span></td></tr>
+          <tr><th>Summary</th><td>{{ health_item.summary or '—' }}</td></tr>
+          <tr><th>Reason Type</th><td>{{ health_item.reason_type or '—' }}</td></tr>
+          <tr><th>Occurred Time</th><td>{{ health_item.occured_time[:19].replace('T',' ') if health_item.occured_time else '—' }} UTC</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="no-data-banner">
+    <i class="bi bi-heart-pulse"></i>
+    No resource health record for this VM. Run a sync to refresh.
+  </div>
+  {% endif %}
+</div>
+
+<!-- ── Logs tab ───────────────────────────────────────────────────────── -->
+<div class="tab-panel" id="tab-logs">
+  <div class="no-data-banner">
+    <i class="bi bi-terminal"></i>
+    Log queries for this VM are available in the
+    <a href="{{ url_for('kql_console') }}?resource={{ vm.name }}" class="text-link">KQL Console</a>.
+    <br><small class="mt-1 d-block text-muted">Logs are only available if this VM has diagnostic settings sending SecurityEvent / Syslog / WindowsEvent logs to the Log Analytics workspace.</small>
+  </div>
+</div>
+{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  const VM_ID = {{ vm.vm_id | tojson }};
+  const METRICS_URL = "{{ url_for('vm_metrics', vm_id=vm.vm_id) }}";
+
+  /* ── Tab switching ────────────────────────────────────────────── */
+  let metricsLoaded = false;
+  document.querySelectorAll('#vm-tabs .nav-link').forEach(link => {
+    link.addEventListener('click', function(e) {
+      e.preventDefault();
+      document.querySelectorAll('#vm-tabs .nav-link').forEach(l => l.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      this.classList.add('active');
+      const tab = 'tab-' + this.dataset.tab;
+      document.getElementById(tab).classList.add('active');
+      if (this.dataset.tab === 'metrics' && !metricsLoaded) {
+        metricsLoaded = true;
+        loadMetric(document.getElementById('metric-picker').value);
+      }
+    });
+  });
+
+  /* ── Mini CPU chart on Overview ───────────────────────────────── */
+  fetchMetricData('Percentage CPU').then(data => {
+    if (!data.length) return;
+    renderChart('cpu-mini-chart', 'CPU %', data, '#0078d4', true);
+  });
+
+  document.getElementById('metric-picker').addEventListener('change', function() {
+    loadMetric(this.value);
+  });
+
+  function loadMetric(metric) {
+    fetchMetricData(metric).then(data => {
+      const noDataEl = document.getElementById('metric-no-data');
+      if (!data.length) {
+        noDataEl.style.display = '';
+        return;
+      }
+      noDataEl.style.display = 'none';
+      renderChart('metric-chart', metric, data, '#0078d4', false);
+    });
+  }
+
+  async function fetchMetricData(metric) {
+    try {
+      const r = await fetch(METRICS_URL + '?metric=' + encodeURIComponent(metric));
+      return await r.json();
+    } catch { return []; }
+  }
+
+  const _charts = {};
+  function renderChart(canvasId, label, data, color, mini) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+    if (_charts[canvasId]) _charts[canvasId].destroy();
+    _charts[canvasId] = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: data.map(d => {
+          const t = new Date(d.timestamp);
+          return t.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+        }),
+        datasets: [{
+          label,
+          data: data.map(d => Math.round(d.value * 100) / 100),
+          borderColor: color,
+          backgroundColor: color + '18',
+          fill: true,
+          tension: 0.3,
+          pointRadius: mini ? 0 : 2,
+          borderWidth: mini ? 1.5 : 2,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: !mini } },
+        scales: {
+          x: { display: !mini, ticks: { maxTicksLimit: 8, font: { size: 11 } } },
+          y: { display: true, ticks: { font: { size: 11 } } }
+        }
+      }
+    });
+  }
+})();
+</script>
+{% endblock %}

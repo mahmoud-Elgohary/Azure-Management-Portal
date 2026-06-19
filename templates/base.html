@@ -5,56 +5,226 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{% block title %}WTS Azure Cloud Manager{% endblock %}</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+  {% block head %}{% endblock %}
 </head>
 <body>
 
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-  <div class="container-fluid">
-    <a class="navbar-brand fw-bold" href="{{ url_for('dashboard') }}">WTS Azure Manager</a>
-    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMenu">
-      <span class="navbar-toggler-icon"></span>
-    </button>
-    <div class="collapse navbar-collapse" id="navMenu">
-      <ul class="navbar-nav me-auto">
-        <li class="nav-item"><a class="nav-link {% if request.endpoint=='dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">Dashboard</a></li>
-        <li class="nav-item"><a class="nav-link {% if request.endpoint=='vms' %}active{% endif %}" href="{{ url_for('vms') }}">Virtual Machines</a></li>
-        <li class="nav-item"><a class="nav-link {% if request.endpoint=='sql_view' %}active{% endif %}" href="{{ url_for('sql_view') }}">SQL / Elastic Pools</a></li>
-        <li class="nav-item"><a class="nav-link {% if request.endpoint=='cost_view' %}active{% endif %}" href="{{ url_for('cost_view') }}">Cost</a></li>
-        <li class="nav-item"><a class="nav-link {% if request.endpoint=='advisor_view' %}active{% endif %}" href="{{ url_for('advisor_view') }}">Advisor</a></li>
-        <li class="nav-item"><a class="nav-link {% if request.endpoint=='health_view' %}active{% endif %}" href="{{ url_for('health_view') }}">Health</a></li>
-        <li class="nav-item"><a class="nav-link {% if request.endpoint=='backup_view' %}active{% endif %}" href="{{ url_for('backup_view') }}">Backup</a></li>
-      </ul>
-      <form action="{{ url_for('trigger_sync') }}" method="post" class="d-flex">
-        <button type="submit" class="btn btn-sm btn-outline-light">&#8635; Sync Now</button>
-      </form>
-    </div>
-  </div>
-</nav>
+<!-- ── Sidebar ──────────────────────────────────────────────────────── -->
+<div id="sidebar">
 
-<div class="container-fluid py-3">
+  <a class="sidebar-brand" href="{{ url_for('dashboard') }}">
+    <div class="brand-icon">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/>
+      </svg>
+    </div>
+    <div>
+      <div class="brand-name">WTS Azure</div>
+      <div class="brand-sub">Cloud Manager</div>
+    </div>
+  </a>
+
+  <nav class="sidebar-nav">
+
+    <div class="nav-section-label">Monitor</div>
+
+    <a href="{{ url_for('dashboard') }}"
+       class="{% if request.endpoint == 'dashboard' %}active{% endif %}">
+      <i class="bi bi-speedometer2"></i> Dashboard
+    </a>
+
+    <a href="{{ url_for('vms') }}"
+       class="{% if request.endpoint in ('vms', 'vm_detail') %}active{% endif %}">
+      <i class="bi bi-server"></i> Virtual Machines
+    </a>
+
+    <a href="{{ url_for('sql_view') }}"
+       class="{% if request.endpoint in ('sql_view', 'sql_detail') %}active{% endif %}">
+      <i class="bi bi-database"></i> SQL / Elastic Pools
+    </a>
+
+    <a href="{{ url_for('cost_view') }}"
+       class="{% if request.endpoint == 'cost_view' %}active{% endif %}">
+      <i class="bi bi-currency-euro"></i> Cost
+    </a>
+
+    <a href="{{ url_for('advisor_view') }}"
+       class="{% if request.endpoint == 'advisor_view' %}active{% endif %}">
+      <i class="bi bi-lightbulb"></i> Advisor
+    </a>
+
+    <a href="{{ url_for('health_view') }}"
+       class="{% if request.endpoint == 'health_view' %}active{% endif %}">
+      <i class="bi bi-heart-pulse"></i> Resource Health
+    </a>
+
+    <a href="{{ url_for('backup_view') }}"
+       class="{% if request.endpoint == 'backup_view' %}active{% endif %}">
+      <i class="bi bi-shield-check"></i> Backup
+    </a>
+
+    <div class="nav-section-label">Investigate</div>
+
+    <a href="{{ url_for('kql_console') }}"
+       class="{% if request.endpoint == 'kql_console' %}active{% endif %}">
+      <i class="bi bi-terminal"></i> KQL Console
+    </a>
+
+    <a href="{{ url_for('alerts_view') }}"
+       class="{% if request.endpoint == 'alerts_view' %}active{% endif %}">
+      <i class="bi bi-bell"></i> Alerts
+      {% if alerts_count is defined and alerts_count %}
+        <span class="nav-badge">{{ alerts_count }}</span>
+      {% endif %}
+    </a>
+
+    <div class="nav-section-label">Network</div>
+
+    <a href="{{ url_for('topology_view') }}"
+       class="{% if request.endpoint == 'topology_view' %}active{% endif %}">
+      <i class="bi bi-diagram-3"></i> Topology
+    </a>
+
+  </nav>
+
+  <!-- Sync status in sidebar footer -->
+  {% if sync is defined and sync.age_minutes is not none %}
+  <div class="sidebar-footer">
+    <i class="bi bi-arrow-clockwise {% if sync.status == 'ok' %}sync-ok{% else %}sync-warn{% endif %}"></i>
+    Synced {{ sync.age_minutes }}m ago
+    {% if sync.status != 'ok' %}&nbsp;<span class="sync-warn">({{ sync.status }})</span>{% endif %}
+  </div>
+  {% elif sync is defined %}
+  <div class="sidebar-footer">
+    <i class="bi bi-exclamation-circle sync-warn"></i> Never synced
+  </div>
+  {% endif %}
+
+</div>
+
+<!-- ── Topbar ────────────────────────────────────────────────────────── -->
+<div id="topbar">
+  <div class="topbar-left">
+    <!-- Mobile hamburger (hidden on desktop via CSS) -->
+    <button id="mobile-sidebar-toggle" class="btn btn-sm btn-light me-2" onclick="document.getElementById('sidebar').classList.toggle('open')" aria-label="Toggle menu">
+      <i class="bi bi-list fs-5"></i>
+    </button>
+
+    <span class="topbar-title">{% block page_title %}WTS Azure Cloud Manager{% endblock %}</span>
+  </div>
+
+  <div class="topbar-actions">
+    <!-- Global search -->
+    <div class="position-relative me-1" id="search-wrap">
+      <input type="text" id="global-search" placeholder="Search resources…" autocomplete="off" />
+      <div class="search-dropdown" id="search-dropdown"></div>
+    </div>
+
+    <!-- Sync now -->
+    <form action="{{ url_for('trigger_sync') }}" method="post" class="d-inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <button type="submit" class="btn btn-sm btn-outline-secondary" title="Trigger a manual sync">
+        <i class="bi bi-arrow-repeat"></i> Sync
+      </button>
+    </form>
+
+    <!-- User chip -->
+    {% if session.user %}
+    <div class="d-flex align-items-center gap-2">
+      <div class="topbar-sync d-none d-xl-flex">
+        {% if sync is defined and sync.age_minutes is not none %}
+          <i class="bi bi-database"></i> {{ sync.age_minutes }}m ago
+        {% endif %}
+      </div>
+      <div class="dropdown">
+        <a class="user-chip dropdown-toggle" href="#" data-bs-toggle="dropdown">
+          <div class="user-avatar">{{ session.user.name[:1].upper() if session.user.name else 'U' }}</div>
+          <span class="d-none d-md-inline">{{ session.user.name }}</span>
+        </a>
+        <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+          <li><span class="dropdown-item-text small text-muted">{{ session.user.email }}</span></li>
+          <li><hr class="dropdown-divider my-1"></li>
+          <li>
+            <a class="dropdown-item small" href="{{ url_for('auth_logout') }}">
+              <i class="bi bi-box-arrow-right me-2"></i>Sign out
+            </a>
+          </li>
+        </ul>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ── Main content ───────────────────────────────────────────────────── -->
+<div id="page-content">
+
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% for category, message in messages %}
-      <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+      <div class="alert alert-{{ category }} alert-dismissible fade show mb-3" role="alert">
         {{ message }}
         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
       </div>
     {% endfor %}
   {% endwith %}
 
-  {% if sync is defined and sync.age_minutes is not none %}
-    <div class="text-muted small mb-2">
-      Last synced <strong>{{ sync.age_minutes }} min ago</strong>
-      ({{ sync.synced_at[:19].replace('T',' ') }} UTC) &mdash; status: {{ sync.status }}
-    </div>
-  {% elif sync is defined %}
-    <div class="text-muted small mb-2">Never synced — run <code>python -m sync.sync_job</code> first.</div>
-  {% endif %}
-
   {% block content %}{% endblock %}
+
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/js/bootstrap.bundle.min.js"></script>
+<script>
+/* ── Global search ─────────────────────────────────────────────────── */
+(function() {
+  const input = document.getElementById('global-search');
+  const dd    = document.getElementById('search-dropdown');
+  if (!input) return;
+
+  let _timer;
+  input.addEventListener('input', function() {
+    clearTimeout(_timer);
+    const q = this.value.trim();
+    if (q.length < 2) { dd.innerHTML = ''; dd.classList.remove('show'); return; }
+    _timer = setTimeout(() => runSearch(q), 250);
+  });
+
+  input.addEventListener('blur', function() {
+    setTimeout(() => { dd.classList.remove('show'); }, 200);
+  });
+
+  input.addEventListener('focus', function() {
+    if (dd.innerHTML.trim()) dd.classList.add('show');
+  });
+
+  async function runSearch(q) {
+    try {
+      const res  = await fetch('/api/search?q=' + encodeURIComponent(q));
+      const data = await res.json();
+      renderResults(data.results || []);
+    } catch(e) { renderResults([]); }
+  }
+
+  function renderResults(results) {
+    if (!results.length) {
+      dd.innerHTML = '<div class="p-3 text-muted small">No results</div>';
+    } else {
+      dd.innerHTML = results.map(r =>
+        `<div class="search-result-item" onclick="location.href='${r.url}'">
+          <div class="fw-500">${esc(r.name)}</div>
+          <div class="search-result-type"><span class="badge bg-secondary bg-opacity-25 text-secondary me-1">${esc(r.type)}</span>${esc(r.sub || '')}</div>
+        </div>`
+      ).join('');
+    }
+    dd.classList.add('show');
+  }
+
+  function esc(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+})();
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

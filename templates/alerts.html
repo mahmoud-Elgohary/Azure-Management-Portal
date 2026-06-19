@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Alerts — WTS Azure Manager{% endblock %}
+{% block page_title %}Azure Monitor Alerts{% endblock %}
+
+{% block content %}
+
+<!-- Summary badges -->
+<div class="d-flex gap-2 mb-3 flex-wrap">
+  {% if summary %}
+    {% for sev, cnt in summary.items() | sort %}
+    <span class="badge fs-6 {% if sev == 'Sev0' %}bg-danger{% elif sev == 'Sev1' %}bg-danger bg-opacity-75{% elif sev == 'Sev2' %}bg-warning text-dark{% elif sev == 'Sev3' %}bg-info text-dark{% else %}bg-secondary{% endif %}">
+      {{ sev }}: {{ cnt }}
+    </span>
+    {% endfor %}
+  {% endif %}
+  <span class="text-muted small ms-2 align-self-center">{{ items|length }} total alerts cached</span>
+</div>
+
+{% if not items %}
+<div class="no-data-banner">
+  <i class="bi bi-bell-slash"></i>
+  No alerts in the cache.
+  {% if summary is not defined or not summary %}
+  <br><small class="mt-2 d-block">Alert sync is not yet configured. Add <code>azure-mgmt-monitor</code> to requirements and wire up <code>azure_client/alerts.py</code>, or check that the SP has <strong>Monitoring Reader</strong> role on the subscription.</small>
+  {% endif %}
+</div>
+{% else %}
+<div class="card">
+  <div class="card-header d-flex align-items-center">
+    <i class="bi bi-bell me-1"></i> Active Alerts
+    <div class="ms-auto d-flex gap-2">
+      <select id="sev-filter" class="form-select form-select-sm" style="width:auto" onchange="filterAlerts()">
+        <option value="">All severities</option>
+        <option>Sev0</option><option>Sev1</option><option>Sev2</option><option>Sev3</option><option>Sev4</option>
+      </select>
+      <select id="state-filter" class="form-select form-select-sm" style="width:auto" onchange="filterAlerts()">
+        <option value="">All states</option>
+        <option>Fired</option><option>Resolved</option>
+      </select>
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0" id="alerts-table">
+      <thead class="table-light">
+        <tr>
+          <th>Severity</th>
+          <th>Alert Rule</th>
+          <th>Resource</th>
+          <th>State</th>
+          <th>Fired Time</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in items %}
+        <tr data-sev="{{ a.severity }}" data-state="{{ a.monitor_condition }}">
+          <td>
+            <span class="fw-bold {% if a.severity in ('Sev0','Sev1') %}sev-critical{% elif a.severity == 'Sev2' %}sev-high{% elif a.severity == 'Sev3' %}sev-medium{% else %}sev-info{% endif %}">
+              {{ a.severity }}
+            </span>
+          </td>
+          <td>{{ a.alert_rule or '—' }}</td>
+          <td><small>{{ a.target_resource_name or a.target_resource or '—' }}</small></td>
+          <td>
+            <span class="badge {% if a.monitor_condition == 'Fired' %}bg-danger{% else %}bg-success{% endif %}">
+              {{ a.monitor_condition or '—' }}
+            </span>
+          </td>
+          <td><small>{{ a.fired_time[:19].replace('T',' ') if a.fired_time else '—' }} UTC</small></td>
+          <td><small>{{ a.description or '—' }}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function filterAlerts() {
+  const sev   = document.getElementById('sev-filter').value;
+  const state = document.getElementById('state-filter').value;
+  document.querySelectorAll('#alerts-table tbody tr').forEach(tr => {
+    const match = (!sev || tr.dataset.sev === sev) && (!state || tr.dataset.state === state);
+    tr.style.display = match ? '' : 'none';
+  });
+}
+</script>
+{% endblock %}

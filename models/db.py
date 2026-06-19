@@ -125,6 +125,91 @@ CREATE TABLE IF NOT EXISTS cost_daily (
     synced_at       TEXT,
     UNIQUE(subscription_id, date, resource_group)
 );
+
+-- ── Network topology tables (Phase 4) ─────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS vnets (
+    vnet_id         TEXT PRIMARY KEY,
+    name            TEXT,
+    resource_group  TEXT,
+    subscription_id TEXT,
+    location        TEXT,
+    address_space   TEXT,
+    synced_at       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS subnets (
+    subnet_id       TEXT PRIMARY KEY,
+    name            TEXT,
+    vnet_id         TEXT,
+    resource_group  TEXT,
+    address_prefix  TEXT,
+    nsg_id          TEXT,
+    synced_at       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS nics (
+    nic_id          TEXT PRIMARY KEY,
+    name            TEXT,
+    resource_group  TEXT,
+    subscription_id TEXT,
+    vm_id           TEXT,
+    subnet_id       TEXT,
+    private_ip      TEXT,
+    public_ip_id    TEXT,
+    synced_at       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS public_ips (
+    pip_id          TEXT PRIMARY KEY,
+    name            TEXT,
+    resource_group  TEXT,
+    subscription_id TEXT,
+    ip_address      TEXT,
+    allocation_method TEXT,
+    nic_id          TEXT,
+    synced_at       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS nsgs (
+    nsg_id          TEXT PRIMARY KEY,
+    name            TEXT,
+    resource_group  TEXT,
+    subscription_id TEXT,
+    location        TEXT,
+    synced_at       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS vnet_peerings (
+    peering_id      TEXT PRIMARY KEY,
+    src_vnet_id     TEXT,
+    dst_vnet_id     TEXT,
+    name            TEXT,
+    state           TEXT,
+    synced_at       TEXT
+);
+
+-- ── Azure Monitor alerts (Phase 5) ────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS alerts (
+    alert_id            TEXT PRIMARY KEY,
+    subscription_id     TEXT,
+    severity            TEXT,
+    alert_rule          TEXT,
+    target_resource     TEXT,
+    target_resource_name TEXT,
+    monitor_condition   TEXT,
+    description         TEXT,
+    fired_time          TEXT,
+    resolved_time       TEXT,
+    synced_at           TEXT
+);
+
+-- Indexes for common queries
+CREATE INDEX IF NOT EXISTS idx_vm_metrics_vm_metric ON vm_metrics(vm_id, metric);
+CREATE INDEX IF NOT EXISTS idx_advisor_resource ON advisor_recs(resource_id);
+CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);
+CREATE INDEX IF NOT EXISTS idx_alerts_fired ON alerts(fired_time);
 """
 
 

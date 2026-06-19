@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block title %}SQL / Elastic Pools — WTS Azure Manager{% endblock %}
+{% block page_title %}SQL / Elastic Pools{% endblock %}
 
 {% block content %}
-<h4 class="mb-3">SQL Servers &amp; Elastic Pools</h4>
+<h5 class="mb-3">SQL Servers &amp; Elastic Pools</h5>
 
 <!-- Filter -->
 <form class="row g-2 mb-3" method="get">
@@ -59,7 +60,7 @@
     <tbody>
       {% for s in servers %}
       <tr>
-        <td>{{ s.name }}</td>
+        <td><a href="{{ url_for('sql_detail', resource_group=s.resource_group, server_name=s.name) }}" class="text-link"><i class="bi bi-database me-1 text-success" style="font-size:.85rem"></i>{{ s.name }}</a></td>
         <td>{{ s.resource_group }}</td>
         <td>{{ s.location }}</td>
         <td><span class="badge {% if s.state == 'Ready' %}bg-success{% else %}bg-secondary{% endif %}">{{ s.state or '—' }}</span></td>

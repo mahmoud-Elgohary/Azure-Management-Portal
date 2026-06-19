@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+{% block title %}KQL Console — WTS Azure Manager{% endblock %}
+{% block page_title %}KQL Console{% endblock %}
+
+{% block content %}
+{% if not workspace_id %}
+<div class="permission-banner mb-3">
+  <i class="bi bi-exclamation-triangle"></i>
+  <div>
+    <strong>LOG_ANALYTICS_WORKSPACE_ID not configured.</strong><br>
+    Add <code>LOG_ANALYTICS_WORKSPACE_ID=&lt;your-workspace-id&gt;</code> to <code>.env</code>
+    and restart the service. The workspace ID can be found in Azure Portal → Log Analytics workspace → Overview.
+  </div>
+</div>
+{% endif %}
+
+<div class="row g-3">
+
+  <!-- Blitz query sidebar -->
+  <div class="col-lg-3">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center gap-1">
+        <i class="bi bi-lightning-charge me-1"></i> Blitz Queries
+        <button class="btn btn-sm btn-link ms-auto p-0 text-muted" onclick="showSaveModal()" title="Save current query">
+          <i class="bi bi-plus-circle"></i>
+        </button>
+      </div>
+      <div class="card-body p-2" id="blitz-list">
+        {% if blitz %}
+          {% for q in blitz %}
+          <a class="blitz-query-item d-flex align-items-start gap-1" href="#"
+             onclick="loadBlitz({{ q.query | tojson }}); return false;"
+             title="{{ q.description or '' }}">
+            <i class="bi bi-terminal mt-1"></i>
+            <div>
+              <div>{{ q.name }}</div>
+              {% if q.description %}<small class="text-muted">{{ q.description[:60] }}</small>{% endif %}
+            </div>
+          </a>
+          {% endfor %}
+        {% else %}
+        <div class="text-muted small p-2">No saved queries yet. Run a query and click Save.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Main editor + results -->
+  <div class="col-lg-9">
+
+    <!-- Editor card -->
+    <div class="card mb-3">
+      <div class="card-header d-flex align-items-center gap-2">
+        <i class="bi bi-code-slash"></i> Query Editor
+        <span class="text-muted small ms-1">Workspace: <code>{{ workspace_id or 'not configured' }}</code></span>
+        <div class="ms-auto d-flex gap-2">
+          <button class="btn btn-sm btn-outline-secondary" onclick="clearEditor()"><i class="bi bi-x"></i> Clear</button>
+          <button class="btn btn-sm btn-primary" id="run-btn" onclick="runQuery()" {% if not workspace_id %}disabled{% endif %}>
+            <i class="bi bi-play-fill"></i> Run
+          </button>
+        </div>
+      </div>
+      <div class="card-body p-2">
+        <textarea id="kql-editor" spellcheck="false" placeholder="Enter KQL query…&#10;&#10;Example: AzureActivity | where ActivityStatus == 'Failed' | top 20 by TimeGenerated desc"></textarea>
+      </div>
+    </div>
+
+    <!-- Results card -->
+    <div class="card" id="results-card" style="display:none">
+      <div class="card-header d-flex align-items-center gap-2">
+        <i class="bi bi-table"></i> Results
+        <span id="result-meta" class="text-muted small ms-1"></span>
+        <span id="truncation-badge" class="badge bg-warning text-dark ms-1" style="display:none">Truncated</span>
+        <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="exportCSV()"><i class="bi bi-download me-1"></i>CSV</button>
+      </div>
+      <div class="card-body p-0">
+        <div id="results-area"></div>
+      </div>
+    </div>
+
+    <!-- No-data hint -->
+    <div id="no-data-hint" class="no-data-banner mt-2" style="display:none">
+      <i class="bi bi-inbox"></i>
+      <span id="no-data-text">Query returned 0 rows.</span>
+    </div>
+
+    <!-- Error display -->
+    <div id="error-panel" class="alert alert-danger mt-2" style="display:none"></div>
+
+    <!-- Spinner -->
+    <div id="query-spinner" class="text-center py-4" style="display:none">
+      <div class="spinner-border text-primary" role="status"></div>
+      <div class="text-muted small mt-2">Running query…</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Save modal -->
+<div class="modal fade" id="save-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Save Query</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label">Name</label>
+          <input type="text" id="save-name" class="form-control" placeholder="e.g. Failed sign-ins last 24h" maxlength="80" />
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Description <span class="text-muted small">(optional)</span></label>
+          <input type="text" id="save-desc" class="form-control" placeholder="Short description" maxlength="200" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary btn-sm" onclick="saveQuery()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const CSRF = {{ csrf_token() | tojson }};
+let _lastColumns = [], _lastRows = [];
+
+/* ── Blitz queries ─────────────────────────────────────────────────── */
+function loadBlitz(query) {
+  document.getElementById('kql-editor').value = query;
+}
+
+/* ── Run query ─────────────────────────────────────────────────────── */
+async function runQuery() {
+  const query = document.getElementById('kql-editor').value.trim();
+  if (!query) return;
+
+  setUI('running');
+  try {
+    const r = await fetch('/api/kql/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF },
+      body: JSON.stringify({ query })
+    });
+    const data = await r.json();
+    handleResult(data);
+  } catch(e) {
+    showError('Network error: ' + e.message);
+  }
+}
+
+function handleResult(data) {
+  if (data.error) {
+    showError(data.error + (data.detail ? '\n\n' + data.detail : ''));
+    return;
+  }
+  if (data.no_data_hint) {
+    setUI('nodata');
+    document.getElementById('no-data-text').textContent = data.no_data_hint;
+    return;
+  }
+  _lastColumns = data.columns || [];
+  _lastRows    = data.rows    || [];
+  renderTable(_lastColumns, _lastRows, data);
+}
+
+function renderTable(columns, rows, meta) {
+  const area = document.getElementById('results-area');
+  const card = document.getElementById('results-card');
+  const metaEl = document.getElementById('result-meta');
+  const truncEl = document.getElementById('truncation-badge');
+  card.style.display = '';
+  document.getElementById('query-spinner').style.display = 'none';
+  document.getElementById('error-panel').style.display = 'none';
+  document.getElementById('no-data-hint').style.display = 'none';
+
+  metaEl.textContent = `${rows.length} row${rows.length !== 1 ? 's' : ''} · ${meta.elapsed_ms ?? '?'} ms`;
+  truncEl.style.display = meta.truncated ? '' : 'none';
+
+  if (!rows.length) {
+    area.innerHTML = '<div class="p-3 text-muted small">Query ran but returned 0 rows.</div>';
+    return;
+  }
+
+  const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const thead = `<tr>${columns.map(c => `<th>${esc(c)}</th>`).join('')}</tr>`;
+  const tbody = rows.slice(0, 500).map(row =>
+    `<tr>${row.map(cell => `<td>${esc(cell)}</td>`).join('')}</tr>`
+  ).join('');
+
+  area.innerHTML = `
+    <div class="table-responsive" style="max-height:420px;overflow-y:auto">
+      <table class="table table-sm table-hover kql-results-table mb-0">
+        <thead class="table-light sticky-top">${thead}</thead>
+        <tbody>${tbody}</tbody>
+      </table>
+    </div>
+    ${rows.length > 500 ? `<div class="p-2 text-muted small">Showing 500 of ${rows.length} rows</div>` : ''}`;
+}
+
+function setUI(state) {
+  document.getElementById('query-spinner').style.display = state === 'running' ? '' : 'none';
+  document.getElementById('results-card').style.display  = state === 'table'   ? '' : 'none';
+  document.getElementById('error-panel').style.display   = state === 'error'   ? '' : 'none';
+  document.getElementById('no-data-hint').style.display  = state === 'nodata'  ? '' : 'none';
+}
+
+function showError(msg) {
+  const el = document.getElementById('error-panel');
+  el.textContent = msg;
+  el.style.display = '';
+  document.getElementById('query-spinner').style.display = 'none';
+  document.getElementById('results-card').style.display = 'none';
+}
+
+/* ── Keyboard shortcut: Ctrl+Enter to run ──────────────────────────── */
+document.getElementById('kql-editor').addEventListener('keydown', function(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runQuery(); }
+});
+
+/* ── Save query ─────────────────────────────────────────────────────── */
+function showSaveModal() {
+  const q = document.getElementById('kql-editor').value.trim();
+  if (!q) { alert('Enter a query first.'); return; }
+  new bootstrap.Modal(document.getElementById('save-modal')).show();
+}
+
+async function saveQuery() {
+  const name  = document.getElementById('save-name').value.trim();
+  const desc  = document.getElementById('save-desc').value.trim();
+  const query = document.getElementById('kql-editor').value.trim();
+  if (!name) { alert('Enter a name.'); return; }
+  try {
+    const r = await fetch('/api/kql/queries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF },
+      body: JSON.stringify({ name, description: desc, query })
+    });
+    const d = await r.json();
+    if (d.error) { alert(d.error); return; }
+    bootstrap.Modal.getInstance(document.getElementById('save-modal')).hide();
+    location.reload();
+  } catch(e) { alert('Save failed: ' + e.message); }
+}
+
+/* ── Export CSV ─────────────────────────────────────────────────────── */
+function exportCSV() {
+  if (!_lastColumns.length) return;
+  const escape = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  const lines = [
+    _lastColumns.map(escape).join(','),
+    ..._lastRows.map(row => row.map(escape).join(','))
+  ];
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'kql-results.csv';
+  a.click();
+}
+
+/* ── Pre-fill resource param from URL ───────────────────────────────── */
+(function() {
+  const params = new URLSearchParams(location.search);
+  const res = params.get('resource');
+  if (res) {
+    document.getElementById('kql-editor').value =
+      `// Logs for ${res}\nEvent | where Computer contains "${res}" | top 50 by TimeGenerated desc`;
+  }
+})();
+</script>
+{% endblock %}

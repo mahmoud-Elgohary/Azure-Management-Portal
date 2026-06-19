@@ -41,3 +41,6 @@ MEM_FREE_AMBER_GB = 1.0
 COST_ANOMALY_MULTIPLIER = 1.5   # flag day if spend > N × recent daily average
 
 BACKUP_STALE_HOURS = 26         # flag VM if last successful backup older than this
+
+# ── Log Analytics KQL console ─────────────────────────────────────────────────
+LOG_ANALYTICS_WORKSPACE_ID = os.environ.get("LOG_ANALYTICS_WORKSPACE_ID", "")
