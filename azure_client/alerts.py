@@ -21,9 +21,9 @@ def fetch_alerts_for_sub(sub_id: str) -> list[dict]:
     url = f"https://management.azure.com/subscriptions/{sub_id}/providers/Microsoft.AlertsManagement/alerts"
     params = {
         "api-version": "2019-03-01",
-        "alertState": "All",
         "timeRange": "7d",
         "pageCount": 250,
+        # no alertState filter → returns all (New, Acknowledged, Closed)
     }
     headers = {"Authorization": f"Bearer {_get_token()}"}
     results = []
