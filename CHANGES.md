@@ -1,5 +1,34 @@
 # WTS Azure Cloud Manager — Change Log
 
+## 2026-06-20 — KQL Console: fix silent failure (backend crash + frontend UX)
+
+### Root causes found
+
+1. **Backend crash (500)** — `azure_client/logs.py` used `col.name` on each column, but
+   `azure-monitor-query` v1.4.1 returns `table.columns` as `List[str]` (not objects).
+   Every query silently 500'd. Fixed: `columns = list(table.columns)`.
+
+2. **Frontend silent failure** — `runQuery()` had `if (!query) return;` with no feedback.
+   Users who clicked Run with an empty editor saw nothing. Fixed: shows red error panel.
+
+3. **Blitz query click didn't run** — `loadBlitz()` populated the editor but didn't call
+   `runQuery()`. Fixed: `loadBlitz` now calls `runQuery()` after setting the value.
+
+4. **No loading state** — Run button wasn't disabled while a query was in-flight.
+   Fixed: button disabled + re-enabled in `finally`, with explicit `credentials: 'same-origin'`.
+
+5. **Silent non-JSON / redirect responses** — fetch had no guard against 302→login or
+   non-JSON bodies. Fixed: checks `r.ok`, catches JSON parse errors, surfaces both visibly.
+
+### Empirical test results (curl against prod workspace 0f3d10b0-…)
+
+| Test | Before | After |
+|---|---|---|
+| `AzureActivity \| take 5` | 500 (`col.name` crash) | ✅ JSON rows |
+| `notatable \| take 1` | 500 crash | ✅ `{"error": "... SEM0100 ..."}` visible in UI |
+| Empty query | Silent return | ✅ Red error panel "Enter a KQL query first." |
+| Blitz query click | Populates editor only | ✅ Populates + runs immediately |
+
 ## 2026-06-19 — Switched data backend to Azure-Reports-MSGraph (split-credential)
 
 ### Summary

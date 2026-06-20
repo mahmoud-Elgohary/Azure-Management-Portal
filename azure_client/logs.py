@@ -57,7 +57,7 @@ def run_kql(workspace_id: str, query: str, timeout_seconds: int = 30, max_rows: 
             "no_data_hint": "Query returned no tables. Verify the workspace ID and that diagnostic settings / AMA are shipping logs here.",
         }
 
-    columns = [col.name for col in table.columns]
+    columns = list(table.columns)  # azure-monitor-query ≥1.3 returns List[str] directly
     raw_rows = table.rows
     truncated = len(raw_rows) >= max_rows
 

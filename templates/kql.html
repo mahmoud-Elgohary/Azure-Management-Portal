@@ -131,24 +131,38 @@ let _lastColumns = [], _lastRows = [];
 /* ── Blitz queries ─────────────────────────────────────────────────── */
 function loadBlitz(query) {
   document.getElementById('kql-editor').value = query;
+  runQuery();
 }
 
 /* ── Run query ─────────────────────────────────────────────────────── */
 async function runQuery() {
   const query = document.getElementById('kql-editor').value.trim();
-  if (!query) return;
+  if (!query) { showError('Enter a KQL query first.'); return; }
 
+  const btn = document.getElementById('run-btn');
+  const wasDisabled = btn.disabled;
+  btn.disabled = true;
   setUI('running');
   try {
     const r = await fetch('/api/kql/run', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF },
       body: JSON.stringify({ query })
     });
-    const data = await r.json();
+    if (!r.ok && r.status !== 500) {
+      // 302→login or unexpected status: surface it rather than silently failing
+      showError(`Unexpected response ${r.status} — try refreshing the page (session may have expired).`);
+      return;
+    }
+    let data;
+    try { data = await r.json(); }
+    catch(_) { showError('Server returned non-JSON response — check service logs.'); return; }
     handleResult(data);
   } catch(e) {
     showError('Network error: ' + e.message);
+  } finally {
+    btn.disabled = wasDisabled;
   }
 }
 
