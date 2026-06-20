@@ -315,14 +315,16 @@ def cost_view():
         mtd = queries.get_mtd_total()
         from azure_client.cost import detect_anomalies
         anomalies = detect_anomalies(daily)
+        cost_recs = queries.get_cost_advisor_recs()
     except Exception as exc:
         flash(_rbac_error(exc), "danger")
-        daily, mtd, anomalies = [], 0, []
+        daily, mtd, anomalies, cost_recs = [], 0, [], []
     return render_template(
         "cost.html",
         daily=daily,
         mtd=mtd,
         anomalies=anomalies,
+        cost_recs=cost_recs,
         sub=sub,
         sync=queries.last_sync_info(),
     )
@@ -583,21 +585,25 @@ def postgresql_detail(resource_group, server_name):
 @login_required
 def security_view():
     try:
-        summary = queries.get_security_summary()
-        open_ports = queries.get_open_nsg_ports()
-        public_ips_exposed = [
-            r for r in queries.get_advisor_recs(category="Security")
-        ]
-        nsg_rules = queries.get_nsg_rules()
+        summary       = queries.get_security_summary()
+        open_ports    = queries.get_open_nsg_ports()
+        high_risk     = queries.get_high_risk_ports()
+        score         = queries.calculate_security_score()
+        advisor_sec   = queries.get_advisor_recs(category="Security")
+        nsg_rules     = queries.get_nsg_rules()
+        gateways      = queries.get_app_gateways()
     except Exception as exc:
         flash(_rbac_error(exc), "danger")
-        summary, open_ports, public_ips_exposed, nsg_rules = {}, [], [], []
+        summary, open_ports, high_risk, score, advisor_sec, nsg_rules, gateways = {}, [], [], {}, [], [], []
     return render_template(
         "security.html",
         summary=summary,
         open_ports=open_ports,
-        advisor_security=public_ips_exposed,
+        high_risk=high_risk,
+        score=score,
+        advisor_security=advisor_sec,
         nsg_rules=nsg_rules,
+        gateways=gateways,
         sync=queries.last_sync_info(),
     )
 
@@ -695,6 +701,54 @@ def api_topology():
         return jsonify(graph)
     except Exception as exc:
         return jsonify({"error": str(exc), "nodes": [], "edges": []}), 200
+
+
+# ── CMDB ──────────────────────────────────────────────────────────────────────
+
+@app.route("/cmdb")
+@login_required
+def cmdb_view():
+    type_filter = request.args.get("type")
+    rg_filter   = request.args.get("rg")
+    search_q    = request.args.get("q", "").strip()
+    try:
+        resources  = queries.get_cmdb_resources(type_filter, rg_filter, search_q or None)
+        rg_list    = queries.distinct_resource_groups()
+        type_list  = queries.get_cmdb_resource_types()
+        counts     = queries.get_resource_counts_by_type()
+    except Exception as exc:
+        flash(_rbac_error(exc), "danger")
+        resources, rg_list, type_list, counts = [], [], [], {}
+    return render_template(
+        "cmdb.html",
+        resources=resources,
+        rg_list=rg_list,
+        type_list=type_list,
+        counts=counts,
+        type_filter=type_filter,
+        rg_filter=rg_filter,
+        search_q=search_q,
+        sync=queries.last_sync_info(),
+    )
+
+
+# ── Change Tracking ───────────────────────────────────────────────────────────
+
+@app.route("/changes")
+@login_required
+def changes_view():
+    try:
+        snapshots = queries.get_resource_snapshots()
+        diff      = queries.get_snapshot_diff()
+    except Exception as exc:
+        flash(_rbac_error(exc), "danger")
+        snapshots, diff = [], {"has_diff": False, "changes": []}
+    return render_template(
+        "changes.html",
+        snapshots=snapshots,
+        diff=diff,
+        sync=queries.last_sync_info(),
+    )
 
 
 # ── Global search ─────────────────────────────────────────────────────────────

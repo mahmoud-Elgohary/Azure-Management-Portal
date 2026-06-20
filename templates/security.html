@@ -4,55 +4,141 @@
 
 {% block content %}
 
-<!-- Security KPI row -->
+<!-- Security score + KPI row -->
 <div class="row g-3 mb-4">
-  <div class="col-6 col-lg-3">
-    <div class="card kpi-card">
-      <div class="kpi-value {% if summary.open_inbound_rules %}text-danger{% else %}text-success{% endif %}">
-        {{ summary.get('open_inbound_rules', 0) }}
+
+  <!-- Security risk score -->
+  <div class="col-12 col-lg-4">
+    <div class="card kpi-card h-100">
+      <div class="d-flex align-items-center gap-3 mb-2">
+        <div class="score-circle" style="background:{{ score.color or '#dc2626' }}">
+          {{ score.score | int }}
+        </div>
+        <div>
+          <div class="kpi-value">Grade {{ score.grade or 'F' }}</div>
+          <div class="kpi-label">Security Risk Score</div>
+          <div class="kpi-sub text-muted">0 = worst · 100 = clean</div>
+        </div>
       </div>
-      <div class="kpi-label">Open Inbound Rules</div>
-      <div class="kpi-sub">NSG rules allowing Any/Internet source</div>
+      <div class="mt-2 small">
+        {% if score.penalties %}
+        {% for factor, penalty in score.penalties.items() %}
+        <div class="d-flex justify-content-between {% if penalty > 0 %}text-danger{% else %}text-success{% endif %} mb-1">
+          <span>{{ factor.replace('_',' ').title() }}</span>
+          <span>{% if penalty > 0 %}-{{ penalty | int }} pts{% else %}✓ ok{% endif %}</span>
+        </div>
+        {% endfor %}
+        {% endif %}
+      </div>
     </div>
   </div>
-  <div class="col-6 col-lg-3">
-    <div class="card kpi-card">
-      <div class="kpi-value {% if summary.public_ip_count %}text-warning{% else %}text-success{% endif %}">
-        {{ summary.get('public_ip_count', 0) }}
+
+  <!-- KPI cards -->
+  <div class="col-12 col-lg-8">
+    <div class="row g-3 h-100">
+      <div class="col-6">
+        <div class="card kpi-card">
+          <div class="kpi-value {% if summary.open_inbound_rules %}text-danger{% else %}text-success{% endif %}">
+            {{ summary.get('open_inbound_rules', 0) }}
+          </div>
+          <div class="kpi-label">Open Inbound Rules</div>
+          <div class="kpi-sub">Any/Internet source</div>
+        </div>
       </div>
-      <div class="kpi-label">Public IPs</div>
-      <div class="kpi-sub">Externally reachable endpoints</div>
+      <div class="col-6">
+        <div class="card kpi-card">
+          <div class="kpi-value {% if high_risk %}text-danger{% else %}text-success{% endif %}">
+            {{ high_risk | length }}
+          </div>
+          <div class="kpi-label">High-Risk Ports Exposed</div>
+          <div class="kpi-sub">SSH/RDP/SMB/MSSQL…</div>
+        </div>
+      </div>
+      <div class="col-6">
+        <div class="card kpi-card">
+          <div class="kpi-value {% if summary.security_advisor_recs %}text-danger{% else %}text-success{% endif %}">
+            {{ summary.get('security_advisor_recs', 0) }}
+          </div>
+          <div class="kpi-label">Security Advisor Recs</div>
+          <div class="kpi-sub"><a href="{{ url_for('advisor_view', category='Security') }}" class="text-link">View all</a></div>
+        </div>
+      </div>
+      <div class="col-6">
+        <div class="card kpi-card">
+          <div class="kpi-value {% if score.gateways_no_waf %}text-warning{% else %}text-success{% endif %}">
+            {{ score.get('gateways_no_waf', 0) }}
+          </div>
+          <div class="kpi-label">Gateways Without WAF</div>
+          <div class="kpi-sub"><a href="{{ url_for('waf_view') }}" class="text-link">WAF Center</a></div>
+        </div>
+      </div>
     </div>
   </div>
-  <div class="col-6 col-lg-3">
-    <div class="card kpi-card">
-      <div class="kpi-value {% if summary.security_advisor_recs %}text-danger{% else %}text-success{% endif %}">
-        {{ summary.get('security_advisor_recs', 0) }}
-      </div>
-      <div class="kpi-label">Security Advisor Recs</div>
-      <div class="kpi-sub"><a href="{{ url_for('advisor_view', category='Security') }}" class="text-link">View all</a></div>
-    </div>
-  </div>
-  <div class="col-6 col-lg-3">
-    <div class="card kpi-card">
-      <div class="kpi-value {% if summary.unavailable_resources %}text-danger{% else %}text-success{% endif %}">
-        {{ summary.get('unavailable_resources', 0) }}
-      </div>
-      <div class="kpi-label">Unavailable Resources</div>
-      <div class="kpi-sub"><a href="{{ url_for('health_view', state='Unavailable') }}" class="text-link">View health</a></div>
-    </div>
-  </div>
+
 </div>
 
 <div class="row g-3">
+
+  <!-- High-risk ports -->
+  <div class="col-12">
+    <div class="card {% if high_risk %}border-danger{% endif %}">
+      <div class="card-header d-flex align-items-center gap-2">
+        <i class="bi bi-exclamation-triangle {% if high_risk %}text-danger{% else %}text-success{% endif %} me-1"></i>
+        High-Risk Port Exposure (SSH · RDP · SMB · MSSQL · MySQL · PostgreSQL · Redis…)
+        {% if high_risk %}
+        <span class="badge bg-danger ms-auto">{{ high_risk | length }} rules</span>
+        {% else %}
+        <span class="badge bg-success ms-auto">Clean</span>
+        {% endif %}
+      </div>
+      <div class="card-body p-0">
+        {% if high_risk %}
+        <div class="table-responsive" style="max-height:280px;overflow-y:auto">
+          <table class="table table-sm mb-0">
+            <thead class="table-light sticky-top">
+              <tr><th>Risk</th><th>Service</th><th>NSG</th><th>Rule</th><th>Port</th><th>Source</th><th>Priority</th></tr>
+            </thead>
+            <tbody>
+              {% for rule in high_risk %}
+              <tr>
+                <td>
+                  <span class="{{ 'risk-critical' if rule.risk_level == 'critical' else 'risk-high' }}">
+                    <i class="bi {% if rule.risk_level == 'critical' %}bi-shield-x{% else %}bi-shield-exclamation{% endif %}"></i>
+                    {{ rule.risk_level | title }}
+                  </span>
+                </td>
+                <td><code class="text-danger">{{ rule.risk_service }}</code></td>
+                <td><small>{{ rule.nsg_name }}</small></td>
+                <td>{{ rule.name }}</td>
+                <td><strong>{{ rule.dest_port }}</strong></td>
+                <td><small class="text-muted">{{ rule.source_prefix }}</small></td>
+                <td>{{ rule.priority }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="px-3 py-2 bg-danger bg-opacity-10 border-top small text-danger">
+          <i class="bi bi-lightbulb me-1"></i>
+          <strong>Remediation:</strong> Restrict source IPs to specific CIDR ranges, deploy Azure Bastion for SSH/RDP, enable JIT VM Access, or move services behind a WAF/App Gateway.
+        </div>
+        {% else %}
+        <div class="p-3 text-center text-muted small">
+          <i class="bi bi-shield-check fs-2 d-block mb-1 text-success"></i>
+          No high-risk ports exposed to Any/Internet source.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
 
   <!-- Open inbound NSG rules -->
   <div class="col-lg-6">
     <div class="card h-100">
       <div class="card-header d-flex align-items-center gap-2">
         <i class="bi bi-shield-x text-danger me-1"></i>
-        Open Inbound Rules (Any/Internet Source)
-        <span class="badge bg-danger ms-auto">{{ open_ports | length }}</span>
+        Open Inbound Rules (Any/Internet)
+        <span class="badge bg-{% if open_ports %}danger{% else %}success{% endif %} ms-auto">{{ open_ports | length }}</span>
       </div>
       <div class="card-body p-0">
         {% if open_ports %}
@@ -124,6 +210,50 @@
     </div>
   </div>
 
+  <!-- App Gateway WAF status -->
+  {% if gateways %}
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header d-flex align-items-center gap-2">
+        <i class="bi bi-router me-1"></i> Application Gateway WAF Status
+        <a href="{{ url_for('waf_view') }}" class="btn btn-sm btn-outline-secondary ms-auto">WAF Center →</a>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead class="table-light">
+              <tr><th>Gateway</th><th>RG</th><th>SKU</th><th>WAF Enabled</th><th>WAF Mode</th><th>OWASP</th><th>State</th></tr>
+            </thead>
+            <tbody>
+              {% for gw in gateways %}
+              <tr {% if not gw.waf_enabled %}class="table-warning"{% endif %}>
+                <td class="fw-500">{{ gw.name }}</td>
+                <td><small>{{ gw.resource_group }}</small></td>
+                <td><code>{{ gw.sku_tier or gw.sku_name or '—' }}</code></td>
+                <td>
+                  {% if gw.waf_enabled %}
+                  <span class="badge bg-success"><i class="bi bi-check me-1"></i>Yes</span>
+                  {% else %}
+                  <span class="badge bg-danger"><i class="bi bi-x me-1"></i>No</span>
+                  {% endif %}
+                </td>
+                <td>{{ gw.waf_mode or '—' }}</td>
+                <td>{{ gw.owasp_version or '—' }}</td>
+                <td>
+                  <span class="badge {% if gw.operational_state == 'Running' %}bg-success{% else %}bg-secondary{% endif %}">
+                    {{ gw.operational_state or '—' }}
+                  </span>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <!-- All NSG rules -->
   <div class="col-12">
     <div class="card">
@@ -143,7 +273,7 @@
         <div class="table-responsive" style="max-height:400px;overflow-y:auto">
           <table class="table table-sm mb-0" id="nsg-rules-table">
             <thead class="table-dark sticky-top">
-              <tr><th>NSG</th><th>Rule Name</th><th>Priority</th><th>Direction</th><th>Access</th><th>Protocol</th><th>Source</th><th>Source Port</th><th>Destination</th><th>Dest Port</th></tr>
+              <tr><th>NSG</th><th>Rule Name</th><th>Priority</th><th>Direction</th><th>Access</th><th>Protocol</th><th>Source</th><th>Src Port</th><th>Destination</th><th>Dst Port</th></tr>
             </thead>
             <tbody>
               {% for rule in nsg_rules %}
@@ -187,15 +317,10 @@
 {% block scripts %}
 <script>
 function filterRules(filter) {
-  const rows = document.querySelectorAll('#nsg-rules-table tbody tr');
-  rows.forEach(row => {
-    if (filter === 'all') {
-      row.style.display = '';
-    } else if (filter === 'Inbound' || filter === 'Outbound') {
-      row.style.display = row.dataset.direction === filter ? '' : 'none';
-    } else {
-      row.style.display = row.dataset.access === filter ? '' : 'none';
-    }
+  document.querySelectorAll('#nsg-rules-table tbody tr').forEach(row => {
+    if (filter === 'all') row.style.display = '';
+    else if (filter === 'Inbound' || filter === 'Outbound') row.style.display = row.dataset.direction === filter ? '' : 'none';
+    else row.style.display = row.dataset.access === filter ? '' : 'none';
   });
 }
 </script>

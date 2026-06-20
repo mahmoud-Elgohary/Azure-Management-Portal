@@ -316,6 +316,29 @@ def _upsert_waf_rules(conn, rows: list[dict], ts: str):
         )
 
 
+def _take_resource_snapshot(conn, ts: str):
+    """Record current resource counts as a daily snapshot for change tracking."""
+    snapshot_date = ts[:10]  # YYYY-MM-DD
+    tables = {
+        "Virtual Machines":     "SELECT COUNT(*) FROM vms",
+        "SQL Servers":          "SELECT COUNT(*) FROM sql_servers",
+        "SQL Databases":        "SELECT COUNT(*) FROM sql_databases",
+        "Elastic Pools":        "SELECT COUNT(*) FROM elastic_pools",
+        "PostgreSQL Servers":   "SELECT COUNT(*) FROM postgresql_servers",
+        "Virtual Networks":     "SELECT COUNT(*) FROM vnets",
+        "NSG Rules":            "SELECT COUNT(*) FROM nsg_rules",
+        "Public IPs":           "SELECT COUNT(*) FROM public_ips WHERE ip_address IS NOT NULL",
+        "App Gateways":         "SELECT COUNT(*) FROM app_gateways",
+    }
+    conn.execute("DELETE FROM resource_snapshots WHERE snapshot_date=?", (snapshot_date,))
+    for rtype, sql in tables.items():
+        count = conn.execute(sql).fetchone()[0]
+        conn.execute(
+            "INSERT INTO resource_snapshots (snapshot_date,resource_type,total_count,synced_at) VALUES (?,?,?,?)",
+            (snapshot_date, rtype, count, ts),
+        )
+
+
 def _upsert_activity_log(conn, rows: list[dict], ts: str):
     for r in rows:
         if "_error" in r:
@@ -500,6 +523,13 @@ def run_sync():
         err = f"ActivityLog: {exc}"
         log.error(err)
         errors.append(err)
+
+    # Resource change snapshot (always runs regardless of errors)
+    try:
+        _take_resource_snapshot(conn, ts)
+        log.info("  → resource snapshot recorded for %s", ts[:10])
+    except Exception as exc:
+        log.warning("Snapshot failed: %s", exc)
 
     status = "error" if len(errors) == total_sections else ("partial" if errors else "ok")
     conn.execute(

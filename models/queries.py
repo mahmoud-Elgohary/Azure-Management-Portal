@@ -961,3 +961,217 @@ def get_resource_counts_by_type() -> dict:
         return {}
     finally:
         conn.close()
+
+
+# ── CMDB ──────────────────────────────────────────────────────────────────────
+
+def get_cmdb_resources(
+    type_filter: str = None,
+    rg_filter: str = None,
+    search_q: str = None,
+    limit: int = 2000,
+) -> list[dict]:
+    """UNION of all major resource tables for unified CMDB inventory view."""
+    conn = get_db()
+    try:
+        union_parts = [
+            "SELECT name,'Virtual Machine' AS type,resource_group,location,power_state AS state,subscription_id,tags,synced_at FROM vms",
+            "SELECT name,'SQL Server' AS type,resource_group,location,state,subscription_id,tags,synced_at FROM sql_servers",
+            "SELECT name,'SQL Database' AS type,resource_group,location,status AS state,subscription_id,tags,synced_at FROM sql_databases",
+            "SELECT name,'Elastic Pool' AS type,resource_group,location,state,subscription_id,tags,synced_at FROM elastic_pools",
+            "SELECT name,'PostgreSQL Server' AS type,resource_group,location,state,subscription_id,tags,synced_at FROM postgresql_servers",
+            "SELECT name,'Virtual Network' AS type,resource_group,NULL AS location,NULL AS state,subscription_id,NULL AS tags,synced_at FROM vnets",
+            "SELECT name,'NSG' AS type,resource_group,location,NULL AS state,subscription_id,NULL AS tags,synced_at FROM nsgs",
+            "SELECT name,'Public IP' AS type,resource_group,NULL AS location,ip_address AS state,subscription_id,NULL AS tags,synced_at FROM public_ips",
+            "SELECT name,'App Gateway' AS type,resource_group,location,operational_state AS state,subscription_id,tags,synced_at FROM app_gateways",
+        ]
+        sql = "SELECT * FROM (" + " UNION ALL ".join(union_parts) + ") t WHERE 1=1"
+        params: list = []
+
+        if type_filter:
+            sql += " AND type = ?"
+            params.append(type_filter)
+        if rg_filter:
+            sql += " AND LOWER(resource_group) = LOWER(?)"
+            params.append(rg_filter)
+        if search_q:
+            like = f"%{search_q}%"
+            sql += " AND (name LIKE ? OR resource_group LIKE ? OR state LIKE ? OR tags LIKE ?)"
+            params.extend([like, like, like, like])
+
+        sql += " ORDER BY type, name LIMIT ?"
+        params.append(limit)
+        return [dict(r) for r in conn.execute(sql, params).fetchall()]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def get_cmdb_resource_types() -> list[str]:
+    return [
+        "Virtual Machine", "SQL Server", "SQL Database", "Elastic Pool",
+        "PostgreSQL Server", "Virtual Network", "NSG", "Public IP", "App Gateway",
+    ]
+
+
+# ── Security score & high-risk ports ──────────────────────────────────────────
+
+def get_high_risk_ports() -> list[dict]:
+    """NSG inbound-allow rules exposing known dangerous ports from Any/Internet."""
+    HIGH_RISK = {
+        "22": ("SSH", "critical"), "3389": ("RDP", "critical"),
+        "445": ("SMB", "critical"), "23": ("Telnet", "critical"),
+        "21": ("FTP", "high"), "1433": ("MSSQL", "high"),
+        "3306": ("MySQL", "high"), "5432": ("PostgreSQL", "high"),
+        "5985": ("WinRM", "high"), "5986": ("WinRM-SSL", "high"),
+        "27017": ("MongoDB", "high"), "6379": ("Redis", "high"),
+        "9200": ("Elasticsearch", "high"),
+        "*": ("All Ports", "critical"),
+    }
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM nsg_rules WHERE direction='Inbound' AND access='Allow' "
+            "AND source_prefix IN ('*','Any','Internet','0.0.0.0/0') "
+            "ORDER BY nsg_name, priority"
+        ).fetchall()
+        result = []
+        for row in rows:
+            r = dict(row)
+            port = str(r.get("dest_port") or "")
+            if port in HIGH_RISK:
+                svc, lvl = HIGH_RISK[port]
+                r["risk_service"] = svc
+                r["risk_level"] = lvl
+                result.append(r)
+        return result
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def calculate_security_score() -> dict:
+    """Return a 0-100 security score with risk-factor breakdown."""
+    conn = get_db()
+    try:
+        open_inbound = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM nsg_rules WHERE direction='Inbound' AND access='Allow' "
+            "AND source_prefix IN ('*','Any','Internet','0.0.0.0/0')"
+        ).fetchone()["cnt"]
+        advisor_high_sec = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM advisor_recs WHERE category='Security' AND impact='High'"
+        ).fetchone()["cnt"]
+        pip_count = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM public_ips WHERE ip_address IS NOT NULL"
+        ).fetchone()["cnt"]
+        gateways_no_waf = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM app_gateways WHERE waf_enabled=0 OR waf_enabled IS NULL"
+        ).fetchone()["cnt"]
+
+        penalties = {
+            "open_inbound": min(open_inbound * 3, 30),
+            "advisor_security": min(advisor_high_sec * 5, 25),
+            "public_ips": min(pip_count * 2, 20),
+            "gateways_no_waf": min(gateways_no_waf * 5, 15),
+        }
+        score = max(0, 100 - sum(penalties.values()))
+        return {
+            "score": score,
+            "grade": "A" if score >= 90 else "B" if score >= 75 else "C" if score >= 60 else "D" if score >= 40 else "F",
+            "color": "#16a34a" if score >= 75 else "#d97706" if score >= 50 else "#dc2626",
+            "open_inbound": open_inbound,
+            "advisor_high_sec": advisor_high_sec,
+            "public_ips": pip_count,
+            "gateways_no_waf": gateways_no_waf,
+            "penalties": penalties,
+        }
+    except Exception:
+        return {"score": 0, "grade": "F", "color": "#dc2626", "open_inbound": 0,
+                "advisor_high_sec": 0, "public_ips": 0, "gateways_no_waf": 0, "penalties": {}}
+    finally:
+        conn.close()
+
+
+# ── Change tracking / snapshots ───────────────────────────────────────────────
+
+def get_resource_snapshots(limit: int = 14) -> list[dict]:
+    """Resource count snapshots ordered newest-first, grouped by date."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT snapshot_date, resource_type, total_count FROM resource_snapshots "
+            "ORDER BY snapshot_date DESC, resource_type"
+        ).fetchall()
+        grouped: dict = {}
+        for row in rows:
+            d = row["snapshot_date"]
+            if d not in grouped:
+                grouped[d] = {"date": d, "types": {}}
+            grouped[d]["types"][row["resource_type"]] = row["total_count"]
+        return list(grouped.values())[:limit]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def get_snapshot_diff() -> dict:
+    """Compare latest vs previous snapshot for change-tracking view."""
+    conn = get_db()
+    try:
+        dates = [r["snapshot_date"] for r in conn.execute(
+            "SELECT DISTINCT snapshot_date FROM resource_snapshots ORDER BY snapshot_date DESC LIMIT 2"
+        ).fetchall()]
+        if not dates:
+            return {"has_diff": False, "latest": None, "previous": None, "changes": []}
+        if len(dates) == 1:
+            latest_rows = {r["resource_type"]: r["total_count"] for r in conn.execute(
+                "SELECT resource_type, total_count FROM resource_snapshots WHERE snapshot_date=?",
+                (dates[0],),
+            ).fetchall()}
+            changes = [{"type": k, "current": v, "previous": 0, "delta": v, "change_type": "added"}
+                       for k, v in sorted(latest_rows.items())]
+            return {"has_diff": False, "latest": dates[0], "previous": None, "changes": changes}
+
+        latest_date, prev_date = dates[0], dates[1]
+        latest_rows = {r["resource_type"]: r["total_count"] for r in conn.execute(
+            "SELECT resource_type, total_count FROM resource_snapshots WHERE snapshot_date=?",
+            (latest_date,),
+        ).fetchall()}
+        prev_rows = {r["resource_type"]: r["total_count"] for r in conn.execute(
+            "SELECT resource_type, total_count FROM resource_snapshots WHERE snapshot_date=?",
+            (prev_date,),
+        ).fetchall()}
+
+        changes = []
+        for rt in sorted(set(latest_rows) | set(prev_rows)):
+            curr = latest_rows.get(rt, 0)
+            prev = prev_rows.get(rt, 0)
+            delta = curr - prev
+            changes.append({
+                "type": rt, "current": curr, "previous": prev, "delta": delta,
+                "change_type": "added" if delta > 0 else "removed" if delta < 0 else "unchanged",
+            })
+        return {"has_diff": True, "latest": latest_date, "previous": prev_date, "changes": changes}
+    except Exception:
+        return {"has_diff": False, "latest": None, "previous": None, "changes": []}
+    finally:
+        conn.close()
+
+
+# ── Cost savings (Advisor cost recommendations) ───────────────────────────────
+
+def get_cost_advisor_recs() -> list[dict]:
+    """Advisor recommendations of category=Cost for the cost savings panel."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM advisor_recs WHERE category='Cost' ORDER BY impact DESC, last_updated DESC LIMIT 50"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()

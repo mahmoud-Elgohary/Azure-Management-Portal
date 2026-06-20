@@ -318,6 +318,37 @@ html, body {
 }
 .permission-banner i { font-size: 1.1rem; flex-shrink: 0; margin-top: .05rem; }
 
+/* ── Clickable KPI links ────────────────────────────────────────────────── */
+a.kpi-link { text-decoration: none; color: inherit; display: block; }
+a.kpi-link:hover .card { box-shadow: 0 4px 14px rgba(0,0,0,.10); transform: translateY(-1px); }
+.card { transition: box-shadow .15s, transform .15s; }
+
+/* ── Security risk levels ───────────────────────────────────────────────── */
+.risk-critical { color: #dc2626; font-weight: 700; }
+.risk-high     { color: #ea580c; font-weight: 600; }
+.risk-medium   { color: #d97706; }
+.risk-low      { color: #16a34a; }
+
+/* ── Security score circle ──────────────────────────────────────────────── */
+.score-circle {
+  width: 80px; height: 80px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.5rem; font-weight: 700; color: #fff; flex-shrink: 0;
+}
+
+/* ── CMDB resource type pill ─────────────────────────────────────────────── */
+.type-pill {
+  font-size: .7rem; padding: .15rem .45rem; border-radius: 10px;
+  background: #f1f5f9; border: 1px solid #e2e8f0; color: #475569;
+  white-space: nowrap;
+}
+
+/* ── Change tracking row colours ─────────────────────────────────────────── */
+tr.diff-added   { background: #f0fdf4; }
+tr.diff-removed { background: #fef2f2; }
+tr.diff-added td:first-child   { border-left: 3px solid #22c55e; }
+tr.diff-removed td:first-child { border-left: 3px solid #ef4444; }
+
 /* ── Misc ──────────────────────────────────────────────────────────────── */
 code { font-size: .82em; background: #f1f5f9; padding: .1em .35em; border-radius: 3px; }
 .display-6 { font-size: 1.9rem; font-weight: 700; }

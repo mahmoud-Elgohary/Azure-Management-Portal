@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}Change Tracking — WTS Azure Manager{% endblock %}
+{% block page_title %}Change Tracking{% endblock %}
+
+{% block content %}
+
+{% if not snapshots %}
+<div class="no-data-banner">
+  <i class="bi bi-clock-history"></i>
+  <strong>No snapshots yet.</strong>
+  Change tracking data is recorded automatically at the end of each sync.
+  Run a sync now and come back — each sync records a daily snapshot of resource counts.
+  With two or more syncs on different days, you'll see a diff.
+</div>
+{% else %}
+
+<!-- Diff: latest vs previous -->
+{% if diff.has_diff %}
+<div class="card mb-4">
+  <div class="card-header d-flex align-items-center gap-2">
+    <i class="bi bi-arrow-left-right text-primary me-1"></i>
+    Change Summary
+    <span class="text-muted small ms-1">{{ diff.previous }} → {{ diff.latest }}</span>
+    {% set added = diff.changes | selectattr('change_type','eq','added') | list | length %}
+    {% set removed = diff.changes | selectattr('change_type','eq','removed') | list | length %}
+    {% if added %}
+    <span class="badge bg-success ms-2">+{{ added }} type{{ 's' if added != 1 }}</span>
+    {% endif %}
+    {% if removed %}
+    <span class="badge bg-danger">-{{ removed }} type{{ 's' if removed != 1 }}</span>
+    {% endif %}
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Resource Type</th>
+            <th class="text-center">Previous ({{ diff.previous }})</th>
+            <th class="text-center">Current ({{ diff.latest }})</th>
+            <th class="text-center">Change</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in diff.changes %}
+          <tr class="{% if c.change_type == 'added' %}diff-added{% elif c.change_type == 'removed' %}diff-removed{% endif %}">
+            <td>
+              <i class="bi {% if c.change_type == 'added' %}bi-plus-circle text-success{% elif c.change_type == 'removed' %}bi-dash-circle text-danger{% else %}bi-circle text-muted{% endif %} me-1"></i>
+              {{ c.type }}
+            </td>
+            <td class="text-center text-muted">{{ c.previous }}</td>
+            <td class="text-center fw-500">{{ c.current }}</td>
+            <td class="text-center">
+              {% if c.delta > 0 %}
+              <span class="text-success fw-500">+{{ c.delta }}</span>
+              {% elif c.delta < 0 %}
+              <span class="text-danger fw-500">{{ c.delta }}</span>
+              {% else %}
+              <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% elif diff.latest %}
+<div class="alert alert-info mb-4">
+  <i class="bi bi-info-circle me-2"></i>
+  <strong>First snapshot recorded</strong> on {{ diff.latest }}.
+  Run another sync on a different day to see a before/after comparison.
+</div>
+{% endif %}
+
+<!-- Snapshot history timeline -->
+<div class="card">
+  <div class="card-header">
+    <i class="bi bi-bar-chart-steps me-1"></i>
+    Resource Count History
+    <span class="badge bg-secondary ms-2">{{ snapshots | length }} days</span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0" id="snapshot-table">
+        <thead class="table-dark sticky-top">
+          <tr>
+            <th>Date</th>
+            {% if snapshots %}
+            {% for rtype in snapshots[0].types.keys() | sort %}
+            <th class="text-center">{{ rtype.replace(' ',' ') }}</th>
+            {% endfor %}
+            {% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for snap in snapshots %}
+          <tr {% if snap.date == diff.latest %}class="table-primary"{% endif %}>
+            <td class="fw-500">
+              {{ snap.date }}
+              {% if snap.date == diff.latest %}<span class="badge bg-primary ms-1" style="font-size:.65rem">latest</span>{% endif %}
+            </td>
+            {% for rtype in snap.types.keys() | sort %}
+            <td class="text-center">{{ snap.types.get(rtype, '—') }}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Mini charts per resource type -->
+{% if snapshots | length >= 2 %}
+<div class="row g-3 mt-2">
+  {% if snapshots[0].types %}
+  {% for rtype in snapshots[0].types.keys() | sort %}
+  <div class="col-md-4 col-lg-3">
+    <div class="card">
+      <div class="card-header py-2" style="font-size:.82rem">
+        <i class="bi bi-graph-up me-1 text-muted"></i>{{ rtype }}
+      </div>
+      <div class="card-body py-2">
+        <canvas id="chart-{{ loop.index }}" height="70"></canvas>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+  {% endif %}
+</div>
+{% endif %}
+
+{% endif %} {# end if snapshots #}
+
+{% endblock %}
+
+{% block head %}
+{% if snapshots | length >= 2 %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if snapshots | length >= 2 %}
+<script>
+const snapshots = {{ snapshots | tojson }};
+
+// Build sorted list of dates (oldest→newest) and resource types
+const dates = snapshots.map(s => s.date).reverse();
+const rtypes = Object.keys(snapshots[0].types).sort();
+
+const palette = ['#0078d4','#7c3aed','#059669','#dc2626','#f59e0b','#0891b2','#be185d','#65a30d','#374151','#9ca3af'];
+
+rtypes.forEach((rtype, idx) => {
+  const el = document.getElementById('chart-' + (idx + 1));
+  if (!el) return;
+  const values = dates.map(d => {
+    const snap = snapshots.find(s => s.date === d);
+    return snap ? (snap.types[rtype] ?? 0) : 0;
+  });
+  new Chart(el, {
+    type: 'line',
+    data: {
+      labels: dates.map(d => d.slice(5)),  // MM-DD
+      datasets: [{
+        data: values,
+        borderColor: palette[idx % palette.length],
+        backgroundColor: palette[idx % palette.length] + '18',
+        fill: true,
+        tension: 0.3,
+        pointRadius: dates.length > 10 ? 0 : 3,
+        borderWidth: 2,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { font: { size: 9 }, maxTicksLimit: 6 }, grid: { display: false } },
+        y: { ticks: { font: { size: 9 }, stepSize: 1 }, min: 0, beginAtZero: true }
+      }
+    }
+  });
+});
+</script>
+{% endif %}
+{% endblock %}

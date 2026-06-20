@@ -102,6 +102,16 @@
       {% endif %}
     </a>
 
+    <a href="{{ url_for('cmdb_view') }}"
+       class="{% if request.endpoint == 'cmdb_view' %}active{% endif %}">
+      <i class="bi bi-card-list"></i> CMDB
+    </a>
+
+    <a href="{{ url_for('changes_view') }}"
+       class="{% if request.endpoint == 'changes_view' %}active{% endif %}">
+      <i class="bi bi-clock-history"></i> Change Tracking
+    </a>
+
     <div class="nav-section-label">Network</div>
 
     <a href="{{ url_for('topology_view') }}"
