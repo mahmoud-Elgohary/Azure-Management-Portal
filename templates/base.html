@@ -32,7 +32,7 @@
 
     <a href="{{ url_for('dashboard') }}"
        class="{% if request.endpoint == 'dashboard' %}active{% endif %}">
-      <i class="bi bi-speedometer2"></i> Dashboard
+      <i class="bi bi-speedometer2"></i> Operations Center
     </a>
 
     <a href="{{ url_for('vms') }}"
@@ -46,7 +46,7 @@
     </a>
 
     <a href="{{ url_for('postgresql_view') }}"
-       class="{% if request.endpoint == 'postgresql_view' %}active{% endif %}">
+       class="{% if request.endpoint in ('postgresql_view', 'postgresql_detail') %}active{% endif %}">
       <i class="bi bi-database-fill-gear"></i> PostgreSQL
     </a>
 
@@ -77,7 +77,17 @@
       <i class="bi bi-shield-exclamation"></i> Security Center
     </a>
 
+    <a href="{{ url_for('waf_view') }}"
+       class="{% if request.endpoint == 'waf_view' %}active{% endif %}">
+      <i class="bi bi-fire"></i> WAF Center
+    </a>
+
     <div class="nav-section-label">Investigate</div>
+
+    <a href="{{ url_for('activity_view') }}"
+       class="{% if request.endpoint == 'activity_view' %}active{% endif %}">
+      <i class="bi bi-activity"></i> Activity Center
+    </a>
 
     <a href="{{ url_for('kql_console') }}"
        class="{% if request.endpoint == 'kql_console' %}active{% endif %}">

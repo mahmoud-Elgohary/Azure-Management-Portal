@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title %}WAF Center — WTS Azure Manager{% endblock %}
+{% block page_title %}WAF Center{% endblock %}
+
+{% block content %}
+
+<!-- KPI row -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-primary">{{ gateways | length }}</div>
+      <div class="kpi-label">Application Gateways</div>
+      <div class="kpi-sub">Total in subscription</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value {% if summary.waf_enabled %}text-success{% else %}text-danger{% endif %}">
+        {{ summary.get('waf_enabled', 0) }}
+      </div>
+      <div class="kpi-label">WAF Enabled</div>
+      <div class="kpi-sub">of {{ summary.get('total_gateways', 0) }} gateways</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-muted">
+        {% set prevention = gateways | selectattr('waf_mode', 'equalto', 'Prevention') | list | length %}
+        {{ prevention }}
+      </div>
+      <div class="kpi-label">Prevention Mode</div>
+      <div class="kpi-sub">WAF in blocking mode</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-muted">
+        {% set detection = gateways | selectattr('waf_mode', 'equalto', 'Detection') | list | length %}
+        {{ detection }}
+      </div>
+      <div class="kpi-label">Detection Mode</div>
+      <div class="kpi-sub">WAF in logging-only mode</div>
+    </div>
+  </div>
+</div>
+
+{% if not gateways %}
+<div class="card">
+  <div class="card-body text-center text-muted py-5">
+    <i class="bi bi-fire fs-1 d-block mb-2"></i>
+    <h5>No Application Gateways found</h5>
+    <p class="small mb-0">Run a sync to discover Application Gateways and WAF configurations.</p>
+  </div>
+</div>
+{% else %}
+
+<!-- Gateway list -->
+<div class="card mb-4">
+  <div class="card-header d-flex align-items-center gap-2">
+    <i class="bi bi-router me-1"></i> Application Gateways
+    <span class="badge bg-secondary ms-auto">{{ gateways | length }}</span>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="table-dark">
+        <tr>
+          <th>Name</th>
+          <th>RG</th>
+          <th>SKU</th>
+          <th>Capacity</th>
+          <th>State</th>
+          <th>WAF</th>
+          <th>Mode</th>
+          <th>OWASP</th>
+          <th>Frontend IPs</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for gw in gateways %}
+        <tr>
+          <td class="fw-500">{{ gw.name }}</td>
+          <td><small>{{ gw.resource_group }}</small></td>
+          <td><code class="small">{{ gw.sku_name or '—' }}</code></td>
+          <td>{{ gw.capacity or '—' }}</td>
+          <td>
+            <span class="badge {% if gw.operational_state == 'Running' %}bg-success{% else %}bg-secondary{% endif %}">
+              {{ gw.operational_state or '—' }}
+            </span>
+          </td>
+          <td>
+            {% if gw.waf_enabled %}
+            <span class="badge bg-success"><i class="bi bi-shield-check"></i> Enabled</span>
+            {% else %}
+            <span class="badge bg-danger"><i class="bi bi-shield-x"></i> Disabled</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if gw.waf_mode %}
+            <span class="badge {% if gw.waf_mode == 'Prevention' %}bg-danger{% else %}bg-warning text-dark{% endif %}">
+              {{ gw.waf_mode }}
+            </span>
+            {% else %}—{% endif %}
+          </td>
+          <td><small>{{ gw.owasp_version or '—' }}</small></td>
+          <td><small class="text-muted">{{ gw.frontend_ips or '—' }}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if waf_rules %}
+<!-- WAF rules -->
+<div class="card">
+  <div class="card-header d-flex align-items-center gap-2">
+    <i class="bi bi-list-check me-1"></i> WAF Rule Groups (Disabled)
+    <span class="badge bg-warning text-dark ms-auto">{{ waf_rules | length }}</span>
+    <small class="text-muted ms-1">Only disabled/overridden rules are shown</small>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive" style="max-height:400px;overflow-y:auto">
+      <table class="table table-sm mb-0">
+        <thead class="table-light sticky-top">
+          <tr><th>Gateway</th><th>Rule Set</th><th>Version</th><th>Rule Group</th><th>State</th></tr>
+        </thead>
+        <tbody>
+          {% for r in waf_rules %}
+          <tr>
+            <td><small>{{ r.gw_name }}</small></td>
+            <td>{{ r.rule_set_type or '—' }}</td>
+            <td>{{ r.rule_set_version or '—' }}</td>
+            <td>{{ r.rule_group or '—' }}</td>
+            <td>
+              <span class="badge bg-secondary">{{ r.state or 'Unknown' }}</span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- WAF KQL investigation links -->
+<div class="card mt-4">
+  <div class="card-header"><i class="bi bi-terminal me-1"></i> WAF Investigations (KQL)</div>
+  <div class="card-body">
+    <p class="small text-muted mb-3">
+      Use the KQL Console to investigate WAF events from Log Analytics.
+      These queries require Application Gateway diagnostic logs to be sent to a Log Analytics workspace.
+    </p>
+    <div class="row g-2">
+      {% set waf_queries = [
+        ("WAF Blocks Today", "AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(1d)\n| where action_s == 'Blocked'\n| summarize count() by ruleId_s, ruleGroup_s\n| order by count_ desc\n| limit 50"),
+        ("Top Blocked Source IPs", "AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(7d)\n| where action_s == 'Blocked'\n| summarize count() by clientIp_s\n| order by count_ desc\n| limit 20"),
+        ("Top Matched URIs", "AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(7d)\n| summarize count() by requestUri_s\n| order by count_ desc\n| limit 20"),
+        ("Attack Types Last 7d", "AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(7d)\n| where action_s == 'Blocked'\n| summarize count() by ruleGroup_s\n| order by count_ desc"),
+        ("Hourly Block Trend", "AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(24h)\n| where action_s == 'Blocked'\n| summarize count() by bin(TimeGenerated, 1h)\n| order by TimeGenerated asc"),
+        ("SQL Injection Attempts", "AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(7d)\n| where ruleGroup_s == 'SQLI'\n| project TimeGenerated, clientIp_s, requestUri_s, ruleId_s, action_s\n| order by TimeGenerated desc"),
+      ] %}
+      {% for name, query in waf_queries %}
+      <div class="col-md-4">
+        <a href="{{ url_for('kql_console') }}?waf_query={{ name | urlencode }}"
+           class="btn btn-sm btn-outline-secondary w-100 text-start"
+           onclick="sessionStorage.setItem('waf_kql_{{ loop.index }}', {{ query | tojson }}); location.href='{{ url_for('kql_console') }}'; return false;">
+          <i class="bi bi-terminal me-1"></i>{{ name }}
+        </a>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{% endif %}
+
+{% endblock %}

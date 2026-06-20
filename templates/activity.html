@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}Activity Center — WTS Azure Manager{% endblock %}
+{% block page_title %}Activity Center{% endblock %}
+
+{% block content %}
+
+<!-- KPI row -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-primary">{{ summary.get('total', 0) }}</div>
+      <div class="kpi-label">Total Events</div>
+      <div class="kpi-sub">In cache (last 7 days)</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value {% if summary.get('failed', 0) %}text-danger{% else %}text-success{% endif %}">
+        {{ summary.get('failed', 0) }}
+      </div>
+      <div class="kpi-label">Failed Operations</div>
+      <div class="kpi-sub">Error + Failed status</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-primary">{{ summary.get('recent_24h', 0) }}</div>
+      <div class="kpi-label">Last 24 Hours</div>
+      <div class="kpi-sub">Recent activity</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-muted">
+        {{ summary.get('top_callers', [{}])[0].get('cnt', 0) if summary.get('top_callers') else 0 }}
+      </div>
+      <div class="kpi-label">Top Caller Actions</div>
+      <div class="kpi-sub">{{ summary.get('top_callers', [{}])[0].get('caller', '—')[:30] if summary.get('top_callers') else '—' }}</div>
+    </div>
+  </div>
+</div>
+
+{% if not events and not summary.get('total') %}
+<div class="permission-banner mb-4">
+  <i class="bi bi-info-circle"></i>
+  <div>
+    <strong>Activity Log requires Log Analytics.</strong><br>
+    Add <code>LOG_ANALYTICS_WORKSPACE_ID=&lt;id&gt;</code> to <code>.env</code> and run a sync.
+    The workspace must receive Azure Activity Log diagnostics.
+    <a href="{{ url_for('kql_console') }}" class="ms-2">Run KQL queries manually →</a>
+  </div>
+</div>
+{% endif %}
+
+<!-- Filters -->
+<form class="d-flex flex-wrap align-items-center gap-2 mb-3" method="get">
+  <label class="small fw-500">Filter:</label>
+  <select name="rg" class="form-select form-select-sm w-auto" onchange="this.form.submit()">
+    <option value="">All resource groups</option>
+    {% for rg_name in resource_groups %}
+    <option value="{{ rg_name }}" {% if selected_rg == rg_name %}selected{% endif %}>{{ rg_name }}</option>
+    {% endfor %}
+  </select>
+  <select name="status" class="form-select form-select-sm w-auto" onchange="this.form.submit()">
+    <option value="">All statuses</option>
+    {% for st in ['Success', 'Failed', 'Failure', 'Start', 'Accept'] %}
+    <option value="{{ st }}" {% if selected_status == st %}selected{% endif %}>{{ st }}</option>
+    {% endfor %}
+  </select>
+  <input type="text" name="caller" class="form-control form-control-sm w-auto"
+         placeholder="Caller filter…" value="{{ selected_caller or '' }}" />
+  <button type="submit" class="btn btn-sm btn-outline-secondary">Apply</button>
+  {% if selected_rg or selected_status or selected_caller %}
+  <a href="{{ url_for('activity_view') }}" class="btn btn-sm btn-outline-secondary">Clear</a>
+  {% endif %}
+  <span class="ms-auto text-muted small">{{ events | length }} events</span>
+</form>
+
+<!-- Event table -->
+<div class="card">
+  <div class="card-body p-0">
+    {% if events %}
+    <div class="table-responsive" style="max-height:600px;overflow-y:auto">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-dark sticky-top">
+          <tr>
+            <th>Timestamp</th>
+            <th>Operation</th>
+            <th>Caller</th>
+            <th>Resource Group</th>
+            <th>Resource Type</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ev in events %}
+          <tr class="{% if ev.status in ('Failed','Failure') %}table-danger{% elif ev.status == 'Start' %}table-warning{% endif %}">
+            <td class="text-nowrap">
+              <small>{{ (ev.event_timestamp or '')[:19].replace('T',' ') }}</small>
+            </td>
+            <td>
+              <span class="text-truncate d-block" style="max-width:280px" title="{{ ev.operation_name }}">
+                <small>{{ ev.operation_name or '—' }}</small>
+              </span>
+            </td>
+            <td>
+              <small class="text-muted" title="{{ ev.caller }}">
+                {{ (ev.caller or '—')[:40] }}
+              </small>
+            </td>
+            <td><small>{{ ev.resource_group or '—' }}</small></td>
+            <td>
+              <small class="text-muted">
+                {{ (ev.resource_type or '').split('/')[-1] or '—' }}
+              </small>
+            </td>
+            <td>
+              <span class="badge
+                {% if ev.status in ('Failed','Failure') %}bg-danger
+                {% elif ev.status == 'Success' %}bg-success
+                {% elif ev.status == 'Start' %}bg-warning text-dark
+                {% else %}bg-secondary{% endif %}">
+                {{ ev.status or '—' }}
+              </span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="p-5 text-center text-muted">
+      <i class="bi bi-activity fs-1 d-block mb-2"></i>
+      <h6>No activity events found</h6>
+      <p class="small mb-0">
+        {% if selected_rg or selected_status or selected_caller %}
+          No events match the current filters. <a href="{{ url_for('activity_view') }}">Clear filters</a>
+        {% else %}
+          Sync hasn't completed or Log Analytics workspace is not configured.
+        {% endif %}
+      </p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% if summary.get('top_callers') %}
+<div class="card mt-3">
+  <div class="card-header"><i class="bi bi-person-circle me-1"></i> Top Callers</div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead class="table-light"><tr><th>Caller</th><th class="text-end">Events</th></tr></thead>
+      <tbody>
+        {% for c in summary.get('top_callers', []) %}
+        <tr>
+          <td>
+            <a href="{{ url_for('activity_view', caller=c.caller) }}" class="text-decoration-none">
+              {{ c.caller or '(system)' }}
+            </a>
+          </td>
+          <td class="text-end fw-500">{{ c.cnt }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- KQL investigation quick-launch -->
+<div class="card mt-3">
+  <div class="card-header"><i class="bi bi-terminal me-1"></i> Quick KQL Investigations</div>
+  <div class="card-body">
+    <div class="row g-2">
+      {% for label, hint in [
+        ('Failed operations last 24h', 'AzureActivity\n| where ActivityStatusValue == "Failed"\n| where TimeGenerated >= ago(1d)\n| project TimeGenerated, Caller, OperationNameValue, ResourceGroup\n| order by TimeGenerated desc'),
+        ('Role assignments last 7d', 'AzureActivity\n| where OperationNameValue contains "roleAssignment"\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, OperationNameValue, ResourceGroup\n| order by TimeGenerated desc'),
+        ('VM start/stop events', 'AzureActivity\n| where OperationNameValue contains "deallocate" or OperationNameValue contains "start"\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, OperationNameValue, ResourceGroup, ActivityStatusValue\n| order by TimeGenerated desc'),
+        ('NSG rule changes', 'AzureActivity\n| where OperationNameValue contains "networkSecurityGroups"\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, OperationNameValue, ResourceGroup, ActivityStatusValue\n| order by TimeGenerated desc'),
+      ] %}
+      <div class="col-md-3">
+        <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                onclick="openKql({{ hint | tojson }})">
+          <i class="bi bi-terminal me-1"></i>{{ label }}
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function openKql(query) {
+  sessionStorage.setItem('kql_prefill', query);
+  location.href = '{{ url_for("kql_console") }}';
+}
+</script>
+{% endblock %}

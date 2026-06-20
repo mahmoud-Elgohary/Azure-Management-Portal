@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+{% block title %}{{ server.name }} — PostgreSQL — WTS Azure Manager{% endblock %}
+{% block page_title %}{{ server.name }}{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-center gap-2 mb-4">
+  <a href="{{ url_for('postgresql_view') }}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left"></i> PostgreSQL Servers
+  </a>
+  <span class="text-muted">/</span>
+  <strong>{{ server.name }}</strong>
+  <span class="badge {% if server.state == 'Ready' %}bg-success{% elif server.state in ('Starting','Updating','Restarting') %}bg-warning text-dark{% else %}bg-danger{% endif %} ms-1">
+    {{ server.state or 'Unknown' }}
+  </span>
+</div>
+
+<!-- Overview cards -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-primary">{{ server.version or '—' }}</div>
+      <div class="kpi-label">PostgreSQL Version</div>
+      <div class="kpi-sub">Engine version</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-muted">{{ server.storage_gb or '—' }}</div>
+      <div class="kpi-label">Storage (GiB)</div>
+      <div class="kpi-sub">Allocated storage</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value {% if server.ha_mode == 'ZoneRedundant' %}text-success{% else %}text-muted{% endif %}">
+        {{ server.ha_mode or 'None' }}
+      </div>
+      <div class="kpi-label">High Availability</div>
+      <div class="kpi-sub">HA configuration</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-primary">{{ server.backup_retention_days or '—' }}</div>
+      <div class="kpi-label">Backup Retention</div>
+      <div class="kpi-sub">Days</div>
+    </div>
+  </div>
+</div>
+
+<!-- Detail tabs -->
+<ul class="nav nav-tabs mb-3" id="pg-tabs">
+  <li class="nav-item"><button class="nav-link active" data-tab="overview">Overview</button></li>
+  <li class="nav-item"><button class="nav-link" data-tab="advisor">Recommendations</button></li>
+  <li class="nav-item"><button class="nav-link" data-tab="health">Health</button></li>
+  <li class="nav-item"><button class="nav-link" data-tab="logs">Logs (KQL)</button></li>
+</ul>
+
+<!-- Overview tab -->
+<div id="tab-overview">
+  <div class="row g-3">
+    <div class="col-lg-6">
+      <div class="card">
+        <div class="card-header"><i class="bi bi-info-circle me-1"></i> Server Details</div>
+        <div class="card-body">
+          <table class="table table-sm table-borderless mb-0">
+            <tbody>
+              <tr><td class="text-muted w-40">Name</td><td><strong>{{ server.name }}</strong></td></tr>
+              <tr><td class="text-muted">Resource Group</td><td>{{ server.resource_group }}</td></tr>
+              <tr><td class="text-muted">Location</td><td>{{ server.location or '—' }}</td></tr>
+              <tr><td class="text-muted">SKU / Tier</td><td><code>{{ server.sku_name or '—' }}</code></td></tr>
+              <tr><td class="text-muted">Admin Login</td><td>{{ server.admin_login or '—' }}</td></tr>
+              <tr><td class="text-muted">FQDN</td><td><code>{{ server.fqdn or '—' }}</code></td></tr>
+              <tr><td class="text-muted">State</td>
+                <td><span class="badge {% if server.state == 'Ready' %}bg-success{% else %}bg-warning text-dark{% endif %}">{{ server.state }}</span></td>
+              </tr>
+              <tr><td class="text-muted">HA Mode</td>
+                <td>
+                  {% if server.ha_mode == 'ZoneRedundant' %}
+                  <span class="badge bg-success">Zone Redundant</span>
+                  {% elif server.ha_mode %}
+                  <span class="badge bg-secondary">{{ server.ha_mode }}</span>
+                  {% else %}<span class="text-muted">None</span>{% endif %}
+                </td>
+              </tr>
+              <tr><td class="text-muted">Backup Retention</td><td>{{ server.backup_retention_days or '—' }} days</td></tr>
+              <tr><td class="text-muted">PG Version</td><td>{{ server.version or '—' }}</td></tr>
+              <tr><td class="text-muted">Storage</td><td>{{ server.storage_gb or '—' }} GiB</td></tr>
+              <tr><td class="text-muted">Last Synced</td><td><small class="text-muted">{{ (server.synced_at or '')[:19] }}</small></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card">
+        <div class="card-header"><i class="bi bi-tags me-1"></i> Tags</div>
+        <div class="card-body">
+          {% if server.tags and server.tags not in ('{}', 'None', '') %}
+          <div class="d-flex flex-wrap gap-1">
+            {% set tags_str = server.tags %}
+            <small class="font-monospace text-muted">{{ tags_str }}</small>
+          </div>
+          {% else %}
+          <span class="text-muted small">No tags</span>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if server.fqdn %}
+      <div class="card mt-3">
+        <div class="card-header"><i class="bi bi-terminal me-1"></i> Connection</div>
+        <div class="card-body">
+          <div class="mb-2 small">
+            <strong>Endpoint:</strong>
+            <code class="ms-1">{{ server.fqdn }}</code>
+          </div>
+          <div class="small text-muted">
+            Port: <code>5432</code> &nbsp;·&nbsp; SSL required
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Advisor tab -->
+<div id="tab-advisor" style="display:none">
+  {% if advisor_recs %}
+  <div class="card">
+    <div class="card-header">
+      <i class="bi bi-lightbulb me-1"></i> Advisor Recommendations
+      <span class="badge bg-secondary ms-2">{{ advisor_recs | length }}</span>
+    </div>
+    <div class="card-body p-0">
+      <table class="table table-sm mb-0">
+        <thead class="table-light">
+          <tr><th>Impact</th><th>Category</th><th>Recommendation</th><th>Solution</th></tr>
+        </thead>
+        <tbody>
+          {% for rec in advisor_recs %}
+          <tr>
+            <td>
+              <span class="badge {% if rec.impact == 'High' %}bg-danger{% elif rec.impact == 'Medium' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                {{ rec.impact }}
+              </span>
+            </td>
+            <td><span class="badge bg-secondary">{{ rec.category }}</span></td>
+            <td><small>{{ (rec.short_description or '')[:100] }}</small></td>
+            <td><small class="text-muted">{{ (rec.solution or '')[:80] }}</small></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="card"><div class="card-body text-center text-muted">
+    <i class="bi bi-check-circle text-success fs-2 d-block mb-2"></i>
+    No Advisor recommendations for this server.
+  </div></div>
+  {% endif %}
+</div>
+
+<!-- Health tab -->
+<div id="tab-health" style="display:none">
+  {% if health_item %}
+  <div class="card">
+    <div class="card-header"><i class="bi bi-heart-pulse me-1"></i> Resource Health</div>
+    <div class="card-body">
+      <div class="d-flex align-items-center gap-3 mb-3">
+        <span class="badge fs-6 {% if health_item.availability_state == 'Available' %}bg-success{% elif health_item.availability_state == 'Unavailable' %}bg-danger{% else %}bg-warning text-dark{% endif %}">
+          {{ health_item.availability_state }}
+        </span>
+      </div>
+      <p class="small">{{ health_item.summary or 'No summary available.' }}</p>
+      {% if health_item.reason_type %}
+      <p class="small text-muted">Reason: {{ health_item.reason_type }}</p>
+      {% endif %}
+      {% if health_item.occured_time %}
+      <p class="small text-muted">Since: {{ health_item.occured_time }}</p>
+      {% endif %}
+    </div>
+  </div>
+  {% else %}
+  <div class="card"><div class="card-body text-muted small text-center">
+    No health data for this server. Run a sync.
+  </div></div>
+  {% endif %}
+</div>
+
+<!-- Logs tab (KQL) -->
+<div id="tab-logs" style="display:none">
+  <div class="card">
+    <div class="card-header"><i class="bi bi-terminal me-1"></i> PostgreSQL Log Investigations</div>
+    <div class="card-body">
+      <p class="small text-muted mb-3">
+        These KQL queries investigate PostgreSQL logs from Log Analytics.
+        Requires <code>AzureDiagnostics</code> table from PostgreSQL diagnostic settings.
+      </p>
+      <div class="row g-2">
+        {% set pg_queries = [
+          ("Error Logs", "AzureDiagnostics\n| where Category == 'PostgreSQLLogs'\n| where Resource == '" ~ server.name.upper() ~ "'\n| where TimeGenerated >= ago(1d)\n| where error_severity_s in ('ERROR','FATAL','PANIC')\n| project TimeGenerated, message_s, error_severity_s\n| order by TimeGenerated desc"),
+          ("Connection Events", "AzureDiagnostics\n| where Category == 'PostgreSQLLogs'\n| where Resource == '" ~ server.name.upper() ~ "'\n| where TimeGenerated >= ago(1d)\n| where message_s startswith 'connection'\n| project TimeGenerated, message_s\n| order by TimeGenerated desc"),
+          ("Long Running Queries", "AzureDiagnostics\n| where Category == 'PostgreSQLLogs'\n| where Resource == '" ~ server.name.upper() ~ "'\n| where TimeGenerated >= ago(1d)\n| where duration_s > 5\n| project TimeGenerated, message_s, duration_s\n| order by duration_s desc"),
+        ] %}
+        {% for name, query in pg_queries %}
+        <div class="col-md-4">
+          <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                  onclick="openKql({{ query | tojson }})">
+            <i class="bi bi-terminal me-1"></i>{{ name }}
+          </button>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('#pg-tabs .nav-link').forEach(btn => {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('#pg-tabs .nav-link').forEach(b => b.classList.remove('active'));
+    this.classList.add('active');
+    ['overview','advisor','health','logs'].forEach(t => {
+      document.getElementById('tab-' + t).style.display = 'none';
+    });
+    document.getElementById('tab-' + this.dataset.tab).style.display = '';
+  });
+});
+
+function openKql(query) {
+  sessionStorage.setItem('kql_prefill', query);
+  location.href = '{{ url_for("kql_console") }}';
+}
+</script>
+{% endblock %}

@@ -84,7 +84,11 @@
         <tbody>
           {% for s in servers %}
           <tr>
-            <td class="fw-500">{{ s.name }}</td>
+            <td class="fw-500">
+              <a href="{{ url_for('postgresql_detail', resource_group=s.resource_group, server_name=s.name) }}" class="text-decoration-none">
+                {{ s.name }}
+              </a>
+            </td>
             <td><small>{{ s.resource_group or '—' }}</small></td>
             <td>
               <span class="badge

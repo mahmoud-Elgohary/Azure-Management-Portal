@@ -263,6 +263,65 @@ CREATE TABLE IF NOT EXISTS resources (
     synced_at       TEXT
 );
 
+-- ── Application Gateway & WAF ─────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS app_gateways (
+    gw_id           TEXT PRIMARY KEY,
+    name            TEXT,
+    resource_group  TEXT,
+    subscription_id TEXT,
+    location        TEXT,
+    sku_name        TEXT,
+    sku_tier        TEXT,
+    operational_state TEXT,
+    waf_enabled     INTEGER DEFAULT 0,
+    waf_mode        TEXT,
+    owasp_version   TEXT,
+    frontend_ips    TEXT,   -- JSON
+    capacity        INTEGER,
+    tags            TEXT,
+    synced_at       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS waf_rules (
+    rule_id         TEXT PRIMARY KEY,
+    gw_id           TEXT NOT NULL,
+    gw_name         TEXT,
+    rule_set_type   TEXT,
+    rule_set_version TEXT,
+    rule_group      TEXT,
+    rule_rule_id    TEXT,
+    state           TEXT,
+    action          TEXT,
+    synced_at       TEXT
+);
+
+-- ── Azure Activity Log (synced via KQL from Log Analytics) ────────────────
+CREATE TABLE IF NOT EXISTS activity_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id        TEXT UNIQUE,
+    caller          TEXT,
+    operation_name  TEXT,
+    resource_type   TEXT,
+    resource_group  TEXT,
+    resource_id     TEXT,
+    status          TEXT,
+    sub_status      TEXT,
+    event_timestamp TEXT,
+    description     TEXT,
+    subscription_id TEXT,
+    synced_at       TEXT
+);
+
+-- ── Resource change snapshots (for change tracking) ───────────────────────
+CREATE TABLE IF NOT EXISTS resource_snapshots (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_date   TEXT NOT NULL,
+    resource_type   TEXT NOT NULL,
+    total_count     INTEGER,
+    detail_json     TEXT,
+    synced_at       TEXT
+);
+
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_vm_metrics_vm_metric ON vm_metrics(vm_id, metric);
 CREATE INDEX IF NOT EXISTS idx_advisor_resource    ON advisor_recs(resource_id);
@@ -279,6 +338,11 @@ CREATE INDEX IF NOT EXISTS idx_nsg_rules_nsg       ON nsg_rules(nsg_id);
 CREATE INDEX IF NOT EXISTS idx_resources_type      ON resources(type);
 CREATE INDEX IF NOT EXISTS idx_resources_rg        ON resources(resource_group);
 CREATE INDEX IF NOT EXISTS idx_kql_history_time    ON kql_history(executed_at);
+CREATE INDEX IF NOT EXISTS idx_activity_time       ON activity_log(event_timestamp);
+CREATE INDEX IF NOT EXISTS idx_activity_rg         ON activity_log(resource_group);
+CREATE INDEX IF NOT EXISTS idx_activity_caller     ON activity_log(caller);
+CREATE INDEX IF NOT EXISTS idx_activity_status     ON activity_log(status);
+CREATE INDEX IF NOT EXISTS idx_snapshots_date      ON resource_snapshots(snapshot_date);
 """
 
 

@@ -327,178 +327,211 @@ def alert_summary() -> dict:
 
 # ── Topology graph ────────────────────────────────────────────────────────────
 
-def get_topology_graph() -> dict:
+def get_topology_graph(view: str = "all") -> dict:
     """
-    Returns {nodes: [...], edges: [...]} for Cytoscape.js rendering.
-    Built from whatever network tables exist in the DB (graceful if missing).
+    Returns {nodes: [...], edges: [...]} for Cytoscape.js.
+
+    ARM IDs from the compute SDK use mixed-case resource group names while
+    Resource Graph normalises everything to lowercase.  All IDs are coerced
+    to lowercase here so edges always resolve correctly.
     """
     conn = get_db()
-    nodes = []
-    edges = []
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    node_ids: set[str] = set()
 
-    def _table_exists(name):
+    def _table_exists(name: str) -> bool:
         return conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,)
         ).fetchone() is not None
 
-    # VMs
-    for vm in conn.execute("SELECT vm_id, name, resource_group, location, power_state, vm_size FROM vms").fetchall():
-        nodes.append({
-            "data": {
-                "id": vm["vm_id"],
-                "label": vm["name"],
-                "type": "vm",
-                "rg": vm["resource_group"],
-                "location": vm["location"],
-                "power_state": vm["power_state"],
-                "vm_size": vm["vm_size"],
-                "url": f"/vms/{vm['resource_group']}/{vm['name']}",
-            }
+    def _add_node(data: dict):
+        nid = (data.get("id") or "").lower()
+        if not nid:
+            return
+        data["id"] = nid
+        node_ids.add(nid)
+        nodes.append({"data": data})
+
+    def _add_edge(edge_id: str, source: str, target: str, etype: str, label: str, **extra):
+        src = (source or "").lower()
+        tgt = (target or "").lower()
+        if not src or not tgt:
+            return
+        # defer validation until all nodes are added
+        edges.append({"data": {"id": edge_id, "source": src, "target": tgt,
+                                "type": etype, "label": label, **extra}})
+
+    # ── VMs ──────────────────────────────────────────────────────────────────
+    for vm in conn.execute(
+        "SELECT vm_id, name, resource_group, location, power_state, vm_size FROM vms"
+    ).fetchall():
+        _add_node({
+            "id": vm["vm_id"],
+            "label": vm["name"],
+            "type": "vm",
+            "rg": vm["resource_group"],
+            "location": vm["location"],
+            "power_state": vm["power_state"] or "unknown",
+            "vm_size": vm["vm_size"],
+            "url": f"/vms/{vm['resource_group']}/{vm['name']}",
         })
 
-    # SQL servers
+    # ── SQL servers ───────────────────────────────────────────────────────────
     for srv in conn.execute(
         "SELECT server_id, name, resource_group, location FROM sql_servers"
     ).fetchall():
-        nodes.append({
-            "data": {
-                "id": srv["server_id"],
-                "label": srv["name"],
-                "type": "sql",
-                "rg": srv["resource_group"],
-                "url": f"/sql/{srv['resource_group']}/{srv['name']}",
-            }
+        _add_node({
+            "id": srv["server_id"],
+            "label": srv["name"],
+            "type": "sql",
+            "rg": srv["resource_group"],
+            "url": f"/sql/{srv['resource_group']}/{srv['name']}",
         })
 
-    # PostgreSQL servers
+    # ── PostgreSQL servers ────────────────────────────────────────────────────
     if _table_exists("postgresql_servers"):
         try:
             for pg in conn.execute(
-                "SELECT server_id, name, resource_group, location FROM postgresql_servers"
+                "SELECT server_id, name, resource_group, location, state FROM postgresql_servers"
             ).fetchall():
-                nodes.append({
-                    "data": {
-                        "id": pg["server_id"],
-                        "label": pg["name"],
-                        "type": "postgresql",
-                        "rg": pg["resource_group"],
-                    }
+                _add_node({
+                    "id": pg["server_id"],
+                    "label": pg["name"],
+                    "type": "postgresql",
+                    "rg": pg["resource_group"],
+                    "state": pg["state"],
+                    "url": f"/postgresql/{pg['resource_group']}/{pg['name']}",
                 })
         except Exception:
             pass
 
-    # VNets
+    # ── App Gateways ──────────────────────────────────────────────────────────
+    if _table_exists("app_gateways"):
+        try:
+            for gw in conn.execute(
+                "SELECT gw_id, name, resource_group, waf_enabled, waf_mode FROM app_gateways"
+            ).fetchall():
+                _add_node({
+                    "id": gw["gw_id"],
+                    "label": gw["name"],
+                    "type": "appgateway",
+                    "rg": gw["resource_group"],
+                    "waf_enabled": bool(gw["waf_enabled"]),
+                })
+        except Exception:
+            pass
+
+    # ── VNets ─────────────────────────────────────────────────────────────────
     if _table_exists("vnets"):
-        for vn in conn.execute("SELECT vnet_id, name, resource_group, location, address_space FROM vnets").fetchall():
-            nodes.append({
-                "data": {
-                    "id": vn["vnet_id"],
-                    "label": vn["name"],
-                    "type": "vnet",
-                    "rg": vn["resource_group"],
-                    "address_space": vn["address_space"],
-                }
+        for vn in conn.execute(
+            "SELECT vnet_id, name, resource_group, address_space FROM vnets"
+        ).fetchall():
+            _add_node({
+                "id": vn["vnet_id"],
+                "label": vn["name"],
+                "type": "vnet",
+                "rg": vn["resource_group"],
+                "address_space": vn["address_space"],
             })
 
-    # Subnets (child nodes of VNets)
+    # ── Subnets ───────────────────────────────────────────────────────────────
     if _table_exists("subnets"):
-        for sn in conn.execute("SELECT subnet_id, name, vnet_id, address_prefix FROM subnets").fetchall():
-            nodes.append({
-                "data": {
-                    "id": sn["subnet_id"],
-                    "label": sn["name"],
-                    "type": "subnet",
-                    "parent": sn["vnet_id"],
-                    "address_prefix": sn["address_prefix"],
-                }
+        for sn in conn.execute(
+            "SELECT subnet_id, name, vnet_id, address_prefix FROM subnets"
+        ).fetchall():
+            _add_node({
+                "id": sn["subnet_id"],
+                "label": sn["name"],
+                "type": "subnet",
+                "parent": (sn["vnet_id"] or "").lower(),
+                "address_prefix": sn["address_prefix"],
             })
 
-    # NICs — edges: NIC→VM and NIC→Subnet
+    # ── NICs ──────────────────────────────────────────────────────────────────
     if _table_exists("nics"):
-        for nic in conn.execute("SELECT nic_id, name, vm_id, subnet_id, private_ip, public_ip_id FROM nics").fetchall():
-            nodes.append({
-                "data": {
-                    "id": nic["nic_id"],
-                    "label": nic["name"],
-                    "type": "nic",
-                    "private_ip": nic["private_ip"],
-                }
+        for nic in conn.execute(
+            "SELECT nic_id, name, vm_id, subnet_id, private_ip FROM nics"
+        ).fetchall():
+            _add_node({
+                "id": nic["nic_id"],
+                "label": nic["name"],
+                "type": "nic",
+                "private_ip": nic["private_ip"],
             })
             if nic["vm_id"]:
-                edges.append({"data": {"id": f"e-nic-vm-{nic['nic_id']}", "source": nic["nic_id"], "target": nic["vm_id"], "type": "api", "label": "attached to"}})
+                _add_edge(f"e-nic-vm-{nic['nic_id'][:40]}", nic["nic_id"], nic["vm_id"], "api", "attached to")
             if nic["subnet_id"]:
-                edges.append({"data": {"id": f"e-nic-sn-{nic['nic_id']}", "source": nic["nic_id"], "target": nic["subnet_id"], "type": "api", "label": "in subnet"}})
+                _add_edge(f"e-nic-sn-{nic['nic_id'][:40]}", nic["nic_id"], nic["subnet_id"], "api", "in subnet")
 
-    # Public IPs — edges: IP→NIC
+    # ── Public IPs ────────────────────────────────────────────────────────────
     if _table_exists("public_ips"):
-        for pip in conn.execute("SELECT pip_id, name, ip_address, nic_id FROM public_ips").fetchall():
-            nodes.append({
-                "data": {
-                    "id": pip["pip_id"],
-                    "label": pip["ip_address"] or pip["name"],
-                    "type": "pip",
-                    "ip": pip["ip_address"],
-                }
+        for pip in conn.execute(
+            "SELECT pip_id, name, ip_address, nic_id FROM public_ips"
+        ).fetchall():
+            _add_node({
+                "id": pip["pip_id"],
+                "label": pip["ip_address"] or pip["name"],
+                "type": "pip",
+                "ip": pip["ip_address"],
             })
             if pip["nic_id"]:
-                edges.append({"data": {"id": f"e-pip-{pip['pip_id']}", "source": pip["pip_id"], "target": pip["nic_id"], "type": "api", "label": "public IP"}})
+                _add_edge(f"e-pip-{pip['pip_id'][:40]}", pip["pip_id"], pip["nic_id"], "api", "public IP")
 
-    # NSGs — nodes + edges to subnets (via subnets.nsg_id)
+    # ── NSGs ──────────────────────────────────────────────────────────────────
     if _table_exists("nsgs"):
-        for nsg in conn.execute("SELECT nsg_id, name, resource_group FROM nsgs").fetchall():
-            nodes.append({
-                "data": {
-                    "id": nsg["nsg_id"],
-                    "label": nsg["name"],
-                    "type": "nsg",
-                    "rg": nsg["resource_group"],
-                }
+        for nsg in conn.execute(
+            "SELECT nsg_id, name, resource_group FROM nsgs"
+        ).fetchall():
+            _add_node({
+                "id": nsg["nsg_id"],
+                "label": nsg["name"],
+                "type": "nsg",
+                "rg": nsg["resource_group"],
             })
-        # Wire NSG→Subnet edges using the subnets.nsg_id foreign key
         if _table_exists("subnets"):
             for sn in conn.execute(
                 "SELECT subnet_id, nsg_id FROM subnets WHERE nsg_id IS NOT NULL AND nsg_id != ''"
             ).fetchall():
-                edges.append({
-                    "data": {
-                        "id": f"e-nsg-sn-{sn['subnet_id']}",
-                        "source": sn["nsg_id"],
-                        "target": sn["subnet_id"],
-                        "type": "api",
-                        "label": "protects",
-                    }
-                })
+                _add_edge(f"e-nsg-sn-{sn['subnet_id'][:40]}", sn["nsg_id"], sn["subnet_id"], "api", "protects")
 
-    # VNet peerings
+    # ── VNet peerings ─────────────────────────────────────────────────────────
     if _table_exists("vnet_peerings"):
-        for p in conn.execute("SELECT peering_id, src_vnet_id, dst_vnet_id, state FROM vnet_peerings").fetchall():
-            edges.append({
-                "data": {
-                    "id": p["peering_id"],
-                    "source": p["src_vnet_id"],
-                    "target": p["dst_vnet_id"],
-                    "type": "api",
-                    "label": "peering",
-                    "peering_state": p["state"],
-                }
-            })
+        for p in conn.execute(
+            "SELECT peering_id, src_vnet_id, dst_vnet_id, state FROM vnet_peerings"
+        ).fetchall():
+            _add_edge(
+                (p["peering_id"] or "")[:60], p["src_vnet_id"], p["dst_vnet_id"],
+                "api", "peering", peering_state=p["state"],
+            )
 
     conn.close()
 
     # Load logical (config-derived) edges from topology_config.json
-    import json, os
-    cfg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "topology_config.json")
+    import json as _json
+    import os as _os
+    cfg_path = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "topology_config.json")
     try:
         with open(cfg_path) as f:
-            topo_cfg = json.load(f)
+            topo_cfg = _json.load(f)
         for n in topo_cfg.get("nodes", []):
-            nodes.append({"data": {**n, "logical": True}})
+            _add_node({**n, "logical": True})
         for e in topo_cfg.get("edges", []):
-            edges.append({"data": {**e, "type": "logical"}})
-    except (FileNotFoundError, json.JSONDecodeError):
+            src = (e.get("source") or "").lower()
+            tgt = (e.get("target") or "").lower()
+            if src and tgt:
+                edges.append({"data": {**e, "source": src, "target": tgt, "type": "logical"}})
+    except (FileNotFoundError, _json.JSONDecodeError):
         pass
 
-    return {"nodes": nodes, "edges": edges}
+    # Drop any edge whose source or target doesn't exist in our node set.
+    # This prevents Cytoscape from throwing "Node/Edge mismatch" errors.
+    valid_edges = [
+        e for e in edges
+        if e["data"]["source"] in node_ids and e["data"]["target"] in node_ids
+    ]
+
+    return {"nodes": nodes, "edges": valid_edges, "node_count": len(nodes), "edge_count": len(valid_edges)}
 
 
 # ── Global search ─────────────────────────────────────────────────────────────
@@ -707,3 +740,224 @@ def get_security_summary() -> dict:
         "security_advisor_recs": sec_recs,
         "unavailable_resources": unavail_count,
     }
+
+
+# ── PostgreSQL detail ─────────────────────────────────────────────────────────
+
+def get_postgresql_server_by_name(resource_group: str, name: str) -> dict | None:
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM postgresql_servers WHERE LOWER(resource_group)=LOWER(?) AND LOWER(name)=LOWER(?)",
+            (resource_group, name),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+# ── App Gateways / WAF ────────────────────────────────────────────────────────
+
+def get_app_gateways(resource_group: str = None) -> list[dict]:
+    conn = get_db()
+    sql = "SELECT * FROM app_gateways WHERE 1=1"
+    params = []
+    if resource_group:
+        sql += " AND resource_group = ?"
+        params.append(resource_group)
+    sql += " ORDER BY name"
+    try:
+        rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    return rows
+
+
+def get_waf_rules(gw_id: str = None) -> list[dict]:
+    conn = get_db()
+    sql = "SELECT * FROM waf_rules WHERE 1=1"
+    params = []
+    if gw_id:
+        sql += " AND gw_id = ?"
+        params.append(gw_id)
+    try:
+        rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    return rows
+
+
+def get_waf_summary() -> dict:
+    conn = get_db()
+    try:
+        gw_row = conn.execute("SELECT COUNT(*) AS cnt, SUM(waf_enabled) AS waf_on FROM app_gateways").fetchone()
+        return {
+            "total_gateways": gw_row["cnt"] if gw_row else 0,
+            "waf_enabled": gw_row["waf_on"] if gw_row else 0,
+        }
+    except Exception:
+        return {"total_gateways": 0, "waf_enabled": 0}
+    finally:
+        conn.close()
+
+
+# ── Activity Log ──────────────────────────────────────────────────────────────
+
+def get_activity_log(
+    resource_group: str = None,
+    caller: str = None,
+    status: str = None,
+    limit: int = 200,
+) -> list[dict]:
+    conn = get_db()
+    sql = "SELECT * FROM activity_log WHERE 1=1"
+    params: list = []
+    if resource_group:
+        sql += " AND resource_group = ?"
+        params.append(resource_group)
+    if caller:
+        sql += " AND caller LIKE ?"
+        params.append(f"%{caller}%")
+    if status:
+        sql += " AND status = ?"
+        params.append(status)
+    sql += " ORDER BY event_timestamp DESC LIMIT ?"
+    params.append(limit)
+    try:
+        rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    return rows
+
+
+def activity_summary() -> dict:
+    conn = get_db()
+    try:
+        total = conn.execute("SELECT COUNT(*) AS cnt FROM activity_log").fetchone()
+        failed = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM activity_log WHERE status IN ('Failed','Failure')"
+        ).fetchone()
+        recent_24h = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM activity_log WHERE event_timestamp >= datetime('now', '-1 day')"
+        ).fetchone()
+        callers = conn.execute(
+            "SELECT caller, COUNT(*) AS cnt FROM activity_log GROUP BY caller ORDER BY cnt DESC LIMIT 5"
+        ).fetchall()
+        return {
+            "total": total["cnt"] if total else 0,
+            "failed": failed["cnt"] if failed else 0,
+            "recent_24h": recent_24h["cnt"] if recent_24h else 0,
+            "top_callers": [dict(r) for r in callers],
+        }
+    except Exception:
+        return {"total": 0, "failed": 0, "recent_24h": 0, "top_callers": []}
+    finally:
+        conn.close()
+
+
+# ── Dashboard statistics ───────────────────────────────────────────────────────
+
+def dashboard_stats() -> dict:
+    """Single-query stats for the redesigned dashboard."""
+    conn = get_db()
+    try:
+        vm_total = conn.execute("SELECT COUNT(*) AS cnt FROM vms").fetchone()["cnt"]
+        vm_running = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM vms WHERE power_state='running'"
+        ).fetchone()["cnt"]
+        sql_db_total = conn.execute("SELECT COUNT(*) AS cnt FROM sql_databases").fetchone()["cnt"]
+        pg_total = conn.execute("SELECT COUNT(*) AS cnt FROM postgresql_servers").fetchone()["cnt"]
+        open_ports_count = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM nsg_rules WHERE direction='Inbound' AND access='Allow' "
+            "AND source_prefix IN ('*','Any','Internet','0.0.0.0/0')"
+        ).fetchone()["cnt"]
+        advisor_high = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM advisor_recs WHERE impact='High'"
+        ).fetchone()["cnt"]
+        backup_ok = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM backup_status WHERE last_backup_status='Completed'"
+        ).fetchone()["cnt"]
+        backup_total = conn.execute("SELECT COUNT(*) AS cnt FROM backup_status").fetchone()["cnt"]
+        unavailable = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM resource_health WHERE availability_state='Unavailable'"
+        ).fetchone()["cnt"]
+        pip_count = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM public_ips WHERE ip_address IS NOT NULL"
+        ).fetchone()["cnt"]
+        failed_activity = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM activity_log WHERE status IN ('Failed','Failure') "
+            "AND event_timestamp >= datetime('now', '-1 day')"
+        ).fetchone()["cnt"]
+        waf_row = conn.execute(
+            "SELECT COUNT(*) AS cnt, SUM(waf_enabled) AS waf_on FROM app_gateways"
+        ).fetchone()
+        return {
+            "vm_total": vm_total,
+            "vm_running": vm_running,
+            "sql_db_total": sql_db_total,
+            "pg_total": pg_total,
+            "open_ports": open_ports_count,
+            "advisor_high": advisor_high,
+            "backup_ok": backup_ok,
+            "backup_total": backup_total,
+            "unavailable": unavailable,
+            "public_ips": pip_count,
+            "failed_activity_24h": failed_activity,
+            "waf_gateways": waf_row["cnt"] if waf_row else 0,
+            "waf_enabled": int(waf_row["waf_on"] or 0) if waf_row else 0,
+        }
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+
+
+def get_top_cost_resource_groups(limit: int = 8) -> list[dict]:
+    """Top resource groups by all-time cost, for dashboard table."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT resource_group, SUM(cost) AS total, currency "
+            "FROM cost_daily GROUP BY resource_group ORDER BY total DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def get_recent_activity(limit: int = 10) -> list[dict]:
+    """Most recent activity log entries for dashboard."""
+    return get_activity_log(limit=limit)
+
+
+def get_resource_counts_by_type() -> dict:
+    """High-level resource counts by major type for CMDB/dashboard."""
+    conn = get_db()
+    try:
+        counts = {}
+        counts["vms"] = conn.execute("SELECT COUNT(*) AS cnt FROM vms").fetchone()["cnt"]
+        counts["sql_servers"] = conn.execute("SELECT COUNT(*) AS cnt FROM sql_servers").fetchone()["cnt"]
+        counts["sql_databases"] = conn.execute("SELECT COUNT(*) AS cnt FROM sql_databases").fetchone()["cnt"]
+        counts["elastic_pools"] = conn.execute("SELECT COUNT(*) AS cnt FROM elastic_pools").fetchone()["cnt"]
+        counts["postgresql"] = conn.execute("SELECT COUNT(*) AS cnt FROM postgresql_servers").fetchone()["cnt"]
+        counts["vnets"] = conn.execute("SELECT COUNT(*) AS cnt FROM vnets").fetchone()["cnt"]
+        counts["subnets"] = conn.execute("SELECT COUNT(*) AS cnt FROM subnets").fetchone()["cnt"]
+        counts["nsgs"] = conn.execute("SELECT COUNT(*) AS cnt FROM nsgs").fetchone()["cnt"]
+        counts["public_ips"] = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM public_ips WHERE ip_address IS NOT NULL"
+        ).fetchone()["cnt"]
+        counts["app_gateways"] = conn.execute("SELECT COUNT(*) AS cnt FROM app_gateways").fetchone()["cnt"]
+        return counts
+    except Exception:
+        return {}
+    finally:
+        conn.close()

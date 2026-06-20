@@ -24,6 +24,8 @@ from azure_client import (
     network,
     alerts as alerts_client,
     postgresql as pg_client,
+    appgateway as appgw_client,
+    activity as activity_client,
 )
 
 log = logging.getLogger("wts.sync")
@@ -285,12 +287,63 @@ def _upsert_alerts(conn, rows: list[dict], ts: str):
         )
 
 
+def _upsert_app_gateways(conn, rows: list[dict], ts: str):
+    conn.execute("DELETE FROM app_gateways")
+    for r in rows:
+        if "_error" in r:
+            log.warning("App Gateway error: %s", r["_error"])
+            continue
+        conn.execute(
+            """INSERT OR REPLACE INTO app_gateways
+               (gw_id,name,resource_group,subscription_id,location,sku_name,sku_tier,
+                operational_state,waf_enabled,waf_mode,owasp_version,frontend_ips,capacity,tags,synced_at)
+               VALUES (:gw_id,:name,:resource_group,:subscription_id,:location,:sku_name,:sku_tier,
+                :operational_state,:waf_enabled,:waf_mode,:owasp_version,:frontend_ips,:capacity,:tags,:synced_at)""",
+            {**r, "synced_at": ts},
+        )
+
+
+def _upsert_waf_rules(conn, rows: list[dict], ts: str):
+    conn.execute("DELETE FROM waf_rules")
+    for r in rows:
+        if "_error" in r:
+            continue
+        conn.execute(
+            """INSERT OR REPLACE INTO waf_rules
+               (rule_id,gw_id,gw_name,rule_set_type,rule_set_version,rule_group,rule_rule_id,state,action,synced_at)
+               VALUES (:rule_id,:gw_id,:gw_name,:rule_set_type,:rule_set_version,:rule_group,:rule_rule_id,:state,:action,:synced_at)""",
+            {**r, "synced_at": ts},
+        )
+
+
+def _upsert_activity_log(conn, rows: list[dict], ts: str):
+    for r in rows:
+        if "_error" in r:
+            log.warning("Activity log error: %s", r["_error"])
+            continue
+        event_id = r.get("event_id") or ""
+        if not event_id:
+            continue
+        conn.execute(
+            """INSERT OR IGNORE INTO activity_log
+               (event_id,caller,operation_name,resource_type,resource_group,resource_id,
+                status,sub_status,event_timestamp,description,subscription_id,synced_at)
+               VALUES (:event_id,:caller,:operation_name,:resource_type,:resource_group,:resource_id,
+                :status,:sub_status,:event_timestamp,:description,:subscription_id,:synced_at)""",
+            {**r, "synced_at": ts},
+        )
+    # Keep only last 2000 entries
+    conn.execute(
+        "DELETE FROM activity_log WHERE id NOT IN (SELECT id FROM activity_log ORDER BY id DESC LIMIT 2000)"
+    )
+
+
 def run_sync():
     init_db()
     ts = _now()
     log.info("Sync starting at %s", ts)
     errors = []
-    total_sections = 10  # VMs, SQL, PostgreSQL, Advisor, Backup, Health, Cost, Network, NSG rules, Alerts
+    total_sections = 12  # VMs, SQL, PostgreSQL, Advisor, Backup, Health, Cost, Network, NSG rules, Alerts, AppGateway, Activity
 
     conn = get_db()
 
@@ -417,6 +470,34 @@ def run_sync():
         log.info("  → %d alert instances", len([r for r in alert_rows if "_error" not in r]))
     except Exception as exc:
         err = f"Alerts: {exc}"
+        log.error(err)
+        errors.append(err)
+
+    # Application Gateways / WAF
+    log.info("Fetching Application Gateways & WAF …")
+    try:
+        appgw_data = appgw_client.fetch_all_appgateways()
+        _upsert_app_gateways(conn, appgw_data["gateways"], ts)
+        _upsert_waf_rules(conn, appgw_data["waf_rules"], ts)
+        ok_gws = len([r for r in appgw_data["gateways"] if "_error" not in r])
+        log.info("  → %d Application Gateways cached", ok_gws)
+    except Exception as exc:
+        err = f"AppGateway: {exc}"
+        log.error(err)
+        errors.append(err)
+
+    # Azure Activity Log (via KQL — only if workspace configured)
+    log.info("Fetching Activity Log (via KQL) …")
+    try:
+        activity_rows = activity_client.fetch_activity_log(days=7)
+        if activity_rows and "_error" not in activity_rows[0]:
+            _upsert_activity_log(conn, activity_rows, ts)
+            ok_events = len([r for r in activity_rows if "_error" not in r])
+            log.info("  → %d activity events synced", ok_events)
+        else:
+            log.info("  → Activity log skipped (no workspace configured or error)")
+    except Exception as exc:
+        err = f"ActivityLog: {exc}"
         log.error(err)
         errors.append(err)
 

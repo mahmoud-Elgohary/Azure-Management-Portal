@@ -1,140 +1,355 @@
 {% extends "base.html" %}
-{% block title %}Dashboard — WTS Azure Manager{% endblock %}
-{% block page_title %}Dashboard{% endblock %}
+{% block title %}Operations Center — WTS Azure Manager{% endblock %}
+{% block page_title %}Operations Center{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
 
 {% block content %}
 
-<!-- KPI row -->
-<div class="row g-3 mb-4">
+{% set s = stats or {} %}
+
+<!-- ── Row 1: Resource inventory KPIs ────────────────────────────────── -->
+<div class="row g-3 mb-3">
 
   <div class="col-6 col-lg-3">
-    <div class="card kpi-card">
-      <div class="kpi-value text-primary">{{ vm_total or 0 }}</div>
-      <div class="kpi-label">Virtual Machines</div>
-      <div class="kpi-sub">
-        {% if vm_power %}
-          {% for state, cnt in vm_power.items() %}
-            <span class="badge {% if state == 'running' %}bg-success{% elif state in ('deallocated','stopped') %}bg-secondary{% else %}bg-warning text-dark{% endif %} me-1">{{ state }} {{ cnt }}</span>
-          {% endfor %}
-        {% else %}no data{% endif %}
+    <a href="{{ url_for('vms') }}" class="text-decoration-none">
+      <div class="card kpi-card kpi-link">
+        <div class="kpi-icon"><i class="bi bi-server"></i></div>
+        <div class="kpi-value text-primary">{{ s.vm_total or 0 }}</div>
+        <div class="kpi-label">Virtual Machines</div>
+        <div class="kpi-sub">
+          <span class="badge bg-success me-1">{{ s.vm_running or 0 }} running</span>
+          {% if (s.vm_total or 0) - (s.vm_running or 0) > 0 %}
+          <span class="badge bg-secondary">{{ (s.vm_total or 0) - (s.vm_running or 0) }} stopped</span>
+          {% endif %}
+        </div>
+      </div>
+    </a>
+  </div>
+
+  <div class="col-6 col-lg-3">
+    <a href="{{ url_for('cost_view') }}" class="text-decoration-none">
+      <div class="card kpi-card kpi-link">
+        <div class="kpi-icon"><i class="bi bi-currency-euro"></i></div>
+        <div class="kpi-value text-success">€{{ "%.0f"|format(mtd_cost or 0) }}</div>
+        <div class="kpi-label">Month-to-Date Cost</div>
+        <div class="kpi-sub">Current calendar month</div>
+      </div>
+    </a>
+  </div>
+
+  <div class="col-6 col-lg-3">
+    <a href="{{ url_for('security_view') }}" class="text-decoration-none">
+      <div class="card kpi-card kpi-link">
+        <div class="kpi-icon"><i class="bi bi-shield-exclamation"></i></div>
+        <div class="kpi-value {% if s.open_ports %}text-danger{% else %}text-success{% endif %}">
+          {{ s.open_ports or 0 }}
+        </div>
+        <div class="kpi-label">Open Inbound Rules</div>
+        <div class="kpi-sub">NSG rules allowing Any/Internet</div>
+      </div>
+    </a>
+  </div>
+
+  <div class="col-6 col-lg-3">
+    <a href="{{ url_for('advisor_view') }}" class="text-decoration-none">
+      <div class="card kpi-card kpi-link">
+        <div class="kpi-icon"><i class="bi bi-lightbulb"></i></div>
+        <div class="kpi-value {% if s.advisor_high %}text-warning{% else %}text-success{% endif %}">
+          {{ s.advisor_high or 0 }}
+        </div>
+        <div class="kpi-label">High Impact Recommendations</div>
+        <div class="kpi-sub"><a href="{{ url_for('advisor_view') }}" class="text-link">View all Advisor</a></div>
+      </div>
+    </a>
+  </div>
+
+</div>
+
+<!-- ── Row 2: Operational status KPIs ────────────────────────────────── -->
+<div class="row g-3 mb-3">
+
+  <div class="col-6 col-lg-3">
+    <a href="{{ url_for('waf_view') }}" class="text-decoration-none">
+      <div class="card kpi-card kpi-link">
+        <div class="kpi-icon"><i class="bi bi-fire"></i></div>
+        <div class="kpi-value {% if s.waf_enabled %}text-success{% else %}text-muted{% endif %}">
+          {{ s.waf_enabled or 0 }}/{{ s.waf_gateways or 0 }}
+        </div>
+        <div class="kpi-label">WAF Active Gateways</div>
+        <div class="kpi-sub">App Gateway + WAF</div>
+      </div>
+    </a>
+  </div>
+
+  <div class="col-6 col-lg-3">
+    <a href="{{ url_for('alerts_view') }}" class="text-decoration-none">
+      <div class="card kpi-card kpi-link">
+        <div class="kpi-icon"><i class="bi bi-bell"></i></div>
+        <div class="kpi-value {% if s.unavailable %}text-danger{% else %}text-success{% endif %}">
+          {{ s.unavailable or 0 }}
+        </div>
+        <div class="kpi-label">Unavailable Resources</div>
+        <div class="kpi-sub"><a href="{{ url_for('health_view') }}" class="text-link">View health</a></div>
+      </div>
+    </a>
+  </div>
+
+  <div class="col-6 col-lg-3">
+    <a href="{{ url_for('backup_view') }}" class="text-decoration-none">
+      <div class="card kpi-card kpi-link">
+        <div class="kpi-icon"><i class="bi bi-shield-check"></i></div>
+        <div class="kpi-value {% if (s.backup_total or 0) > (s.backup_ok or 0) %}text-danger{% else %}text-success{% endif %}">
+          {{ s.backup_ok or 0 }}/{{ s.backup_total or 0 }}
+        </div>
+        <div class="kpi-label">Backup Status</div>
+        <div class="kpi-sub">Completed / Total protected VMs</div>
+      </div>
+    </a>
+  </div>
+
+  <div class="col-6 col-lg-3">
+    <a href="{{ url_for('activity_view') }}" class="text-decoration-none">
+      <div class="card kpi-card kpi-link">
+        <div class="kpi-icon"><i class="bi bi-activity"></i></div>
+        <div class="kpi-value {% if s.failed_activity_24h %}text-danger{% else %}text-success{% endif %}">
+          {{ s.failed_activity_24h or 0 }}
+        </div>
+        <div class="kpi-label">Failed Operations (24h)</div>
+        <div class="kpi-sub">Azure Activity Log failures</div>
+      </div>
+    </a>
+  </div>
+
+</div>
+
+<!-- ── Row 3: Charts ──────────────────────────────────────────────────── -->
+<div class="row g-3 mb-3">
+
+  <div class="col-lg-8">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-graph-up me-2 text-primary"></i>Cost Trend
+        <a href="{{ url_for('cost_view') }}" class="btn btn-sm btn-link ms-auto">Full report</a>
+      </div>
+      <div class="card-body">
+        <div style="height:200px"><canvas id="chart-cost"></canvas></div>
       </div>
     </div>
   </div>
 
-  <div class="col-6 col-lg-3">
-    <div class="card kpi-card">
-      <div class="kpi-value text-success">€{{ mtd_cost or '—' }}</div>
-      <div class="kpi-label">Month-to-Date Cost</div>
-      <div class="kpi-sub"><a href="{{ url_for('cost_view') }}" class="text-link">View breakdown</a></div>
-    </div>
-  </div>
-
-  <div class="col-6 col-lg-3">
-    <div class="card kpi-card">
-      <div class="kpi-value {% if backup_problems %}text-danger{% else %}text-success{% endif %}">
-        {{ backup_problems or 0 }}
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-pie-chart me-2 text-primary"></i>Resource Inventory
       </div>
-      <div class="kpi-label">Backup Issues</div>
-      <div class="kpi-sub">
-        {% if backup_problems %}<a href="{{ url_for('backup_view') }}" class="text-link text-danger">View backups</a>
-        {% else %}All backups OK{% endif %}
-      </div>
-    </div>
-  </div>
-
-  <div class="col-6 col-lg-3">
-    <div class="card kpi-card">
-      {% set unavailable = health_summary.get('Unavailable', 0) %}
-      <div class="kpi-value {% if unavailable %}text-danger{% else %}text-success{% endif %}">
-        {{ unavailable }}
-      </div>
-      <div class="kpi-label">Unavailable Resources</div>
-      <div class="kpi-sub">
-        {% if health_summary %}
-          {% for state, cnt in health_summary.items() %}
-            <span class="badge {% if state == 'Available' %}bg-success{% elif state == 'Unavailable' %}bg-danger{% else %}bg-warning text-dark{% endif %} me-1">{{ state }} {{ cnt }}</span>
-          {% endfor %}
-        {% else %}no data{% endif %}
+      <div class="card-body">
+        {% set rc = resource_counts or {} %}
+        <div class="d-flex flex-column gap-1 small">
+          <div class="d-flex justify-content-between">
+            <span><i class="bi bi-server text-primary me-1"></i>Virtual Machines</span>
+            <strong>{{ rc.vms or 0 }}</strong>
+          </div>
+          <div class="d-flex justify-content-between">
+            <span><i class="bi bi-database text-success me-1"></i>SQL Databases</span>
+            <strong>{{ rc.sql_databases or 0 }}</strong>
+          </div>
+          <div class="d-flex justify-content-between">
+            <span><i class="bi bi-database-fill-gear text-info me-1"></i>PostgreSQL Servers</span>
+            <strong>{{ rc.postgresql or 0 }}</strong>
+          </div>
+          <div class="d-flex justify-content-between">
+            <span><i class="bi bi-diagram-3 text-purple me-1"></i>VNets</span>
+            <strong>{{ rc.vnets or 0 }}</strong>
+          </div>
+          <div class="d-flex justify-content-between">
+            <span><i class="bi bi-shield-x text-danger me-1"></i>NSGs</span>
+            <strong>{{ rc.nsgs or 0 }}</strong>
+          </div>
+          <div class="d-flex justify-content-between">
+            <span><i class="bi bi-globe text-warning me-1"></i>Public IPs</span>
+            <strong>{{ rc.public_ips or 0 }}</strong>
+          </div>
+          <div class="d-flex justify-content-between">
+            <span><i class="bi bi-fire text-danger me-1"></i>App Gateways</span>
+            <strong>{{ rc.app_gateways or 0 }}</strong>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 
 </div>
 
-<!-- Details row -->
+<!-- ── Row 4: Tables ──────────────────────────────────────────────────── -->
 <div class="row g-3">
 
-  <!-- Elastic pools -->
-  <div class="col-md-4">
+  <!-- Top cost by resource group -->
+  <div class="col-lg-6">
     <div class="card h-100">
-      <div class="card-header"><i class="bi bi-database me-1"></i>SQL Elastic Pools</div>
-      <div class="card-body">
-        {% if pools %}
-          <p class="kpi-value">{{ pools | length }}</p>
-          {% for pool in pools[:5] %}
-            <div class="small mb-1">
-              <span class="fw-500">{{ pool.name }}</span>
-              <span class="text-muted"> · {{ pool.capacity or '?' }} cap, {{ pool.db_count }} DBs</span>
-            </div>
-          {% endfor %}
-          {% if pools | length > 5 %}<div class="small text-muted">… and {{ pools|length - 5 }} more</div>{% endif %}
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-sort-down me-2 text-warning"></i>Top Cost by Resource Group
+        <a href="{{ url_for('cost_view') }}" class="btn btn-sm btn-link ms-auto">Full breakdown</a>
+      </div>
+      <div class="card-body p-0">
+        {% if top_cost_rgs %}
+        <table class="table table-sm mb-0">
+          <thead class="table-light"><tr><th>Resource Group</th><th class="text-end">Total Cost</th></tr></thead>
+          <tbody>
+            {% for rg in top_cost_rgs %}
+            <tr>
+              <td><small>{{ rg.resource_group or '(unassigned)' }}</small></td>
+              <td class="text-end fw-500">€{{ "%.2f"|format(rg.total or 0) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
         {% else %}
-          <span class="text-muted">No elastic pools</span>
+        <div class="p-3 text-muted small text-center">No cost data yet — sync to populate.</div>
         {% endif %}
-        <a href="{{ url_for('sql_view') }}" class="btn btn-sm btn-outline-primary mt-3">View SQL</a>
       </div>
     </div>
   </div>
 
-  <!-- Advisor -->
-  <div class="col-md-4">
+  <!-- Recent activity -->
+  <div class="col-lg-6">
     <div class="card h-100">
-      <div class="card-header"><i class="bi bi-lightbulb me-1"></i>Advisor Recommendations</div>
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-clock-history me-2 text-primary"></i>Recent Activity
+        <a href="{{ url_for('activity_view') }}" class="btn btn-sm btn-link ms-auto">All activity</a>
+      </div>
+      <div class="card-body p-0">
+        {% if recent_activity %}
+        <div style="max-height:260px;overflow-y:auto">
+          <table class="table table-sm mb-0">
+            <thead class="table-light sticky-top"><tr><th>Operation</th><th>Status</th><th>When</th></tr></thead>
+            <tbody>
+              {% for ev in recent_activity %}
+              <tr>
+                <td>
+                  <div class="text-truncate" style="max-width:220px" title="{{ ev.operation_name }}">
+                    <small>{{ (ev.operation_name or '')[-50:] }}</small>
+                  </div>
+                  <small class="text-muted">{{ ev.caller or '' }}</small>
+                </td>
+                <td>
+                  <span class="badge {% if ev.status in ('Failed','Failure') %}bg-danger{% elif ev.status == 'Success' %}bg-success{% else %}bg-secondary{% endif %}">
+                    {{ ev.status }}
+                  </span>
+                </td>
+                <td><small class="text-muted">{{ (ev.event_timestamp or '')[:10] }}</small></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="p-3 text-muted small text-center">
+          No activity data. Add <code>LOG_ANALYTICS_WORKSPACE_ID</code> to .env and sync.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Advisor by category -->
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-lightbulb me-2 text-warning"></i>Advisor Recommendations
+        <a href="{{ url_for('advisor_view') }}" class="btn btn-sm btn-link ms-auto">View all</a>
+      </div>
       <div class="card-body">
         {% if advisor_cats %}
-          <div class="d-flex flex-wrap gap-2 mb-3">
+        <div class="d-flex flex-wrap gap-3">
           {% for cat, cnt in advisor_cats.items() | sort %}
-            <div class="text-center">
-              <div class="kpi-value" style="font-size:1.4rem">{{ cnt }}</div>
-              <span class="badge
-                {% if cat == 'Cost' %}bg-warning text-dark
-                {% elif cat == 'Security' %}bg-danger
-                {% elif cat == 'Reliability' %}bg-primary
-                {% elif cat == 'Performance' %}bg-info text-dark
-                {% else %}bg-secondary{% endif %}">{{ cat }}</span>
-            </div>
+          <a href="{{ url_for('advisor_view', category=cat) }}" class="text-decoration-none text-center">
+            <div class="kpi-value mb-0" style="font-size:1.6rem">{{ cnt }}</div>
+            <span class="badge
+              {% if cat == 'Cost' %}bg-warning text-dark
+              {% elif cat == 'Security' %}bg-danger
+              {% elif cat == 'Reliability' %}bg-primary
+              {% elif cat == 'Performance' %}bg-info text-dark
+              {% else %}bg-secondary{% endif %}">{{ cat }}</span>
+          </a>
           {% endfor %}
-          </div>
+        </div>
         {% else %}
-          <span class="text-muted">No recommendations</span>
+        <div class="text-muted small">No Advisor data. Run a sync.</div>
         {% endif %}
-        <a href="{{ url_for('advisor_view') }}" class="btn btn-sm btn-outline-primary mt-2">View Advisor</a>
       </div>
     </div>
   </div>
 
-  <!-- VM power state detail -->
-  <div class="col-md-4">
-    <div class="card h-100">
-      <div class="card-header"><i class="bi bi-server me-1"></i>Virtual Machine States</div>
+  <!-- Resource health summary -->
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-heart-pulse me-2 text-danger"></i>Resource Health
+        <a href="{{ url_for('health_view') }}" class="btn btn-sm btn-link ms-auto">View all</a>
+      </div>
       <div class="card-body">
-        {% if vm_power %}
-          {% for state, cnt in vm_power.items() %}
-          <div class="d-flex align-items-center justify-content-between mb-2">
-            <div class="d-flex align-items-center gap-2">
-              <div class="status-dot {% if state == 'running' %}green{% elif state in ('deallocated','stopped') %}gray{% else %}amber{% endif %}"></div>
-              {{ state }}
-            </div>
-            <strong>{{ cnt }}</strong>
-          </div>
+        {% if health_summary %}
+        <div class="d-flex flex-wrap gap-3">
+          {% for state, cnt in health_summary.items() %}
+          <a href="{{ url_for('health_view', state=state) }}" class="text-decoration-none text-center">
+            <div class="kpi-value mb-0" style="font-size:1.6rem
+              {% if state == 'Unavailable' %};color:#dc2626
+              {% elif state == 'Available' %};color:#059669{% endif %}">{{ cnt }}</div>
+            <span class="badge
+              {% if state == 'Available' %}bg-success
+              {% elif state == 'Unavailable' %}bg-danger
+              {% else %}bg-warning text-dark{% endif %}">{{ state }}</span>
+          </a>
           {% endfor %}
+        </div>
         {% else %}
-          <span class="text-muted">No VMs found</span>
+        <div class="text-muted small">No health data. Run a sync.</div>
         {% endif %}
-        <a href="{{ url_for('vms') }}" class="btn btn-sm btn-outline-primary mt-2">View VMs</a>
       </div>
     </div>
   </div>
 
 </div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(async function() {
+  try {
+    const r = await fetch('/api/cost/trend');
+    const trend = await r.json();
+    if (!trend.length) return;
+
+    const labels = trend.map(d => d.date);
+    const values = trend.map(d => d.total);
+    new Chart(document.getElementById('chart-cost'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Daily Cost (€)',
+          data: values,
+          borderColor: '#0078d4',
+          backgroundColor: 'rgba(0,120,212,0.08)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: labels.length > 60 ? 0 : 3,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { maxTicksLimit: 10, font: { size: 10 } } },
+          y: { ticks: { font: { size: 10 }, callback: v => '€' + v.toFixed(0) } }
+        }
+      }
+    });
+  } catch(e) { console.warn('Dashboard cost chart failed:', e); }
+})();
+</script>
 {% endblock %}

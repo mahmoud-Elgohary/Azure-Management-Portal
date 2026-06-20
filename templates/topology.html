@@ -20,7 +20,10 @@
     <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#0891b2"></div> PostgreSQL</div>
     <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#374151"></div> On-prem (logical)</div>
   </div>
-  <div class="ms-auto d-flex gap-2">
+  <div class="ms-auto d-flex gap-2 flex-wrap">
+    <select id="rg-filter" class="form-select form-select-sm" style="width:auto" onchange="loadTopology()">
+      <option value="">All resource groups</option>
+    </select>
     <select id="layout-picker" class="form-select form-select-sm" style="width:auto">
       <option value="cose">Force-directed</option>
       <option value="breadthfirst">Hierarchical</option>
@@ -29,6 +32,7 @@
     </select>
     <button class="btn btn-sm btn-outline-secondary" onclick="fitGraph()"><i class="bi bi-fullscreen"></i> Fit</button>
     <button class="btn btn-sm btn-outline-secondary" onclick="loadTopology()"><i class="bi bi-arrow-repeat"></i> Refresh</button>
+    <span id="topo-stats" class="badge bg-secondary align-self-center" style="display:none"></span>
   </div>
 </div>
 
@@ -69,19 +73,45 @@
 <script>
 let cy = null;
 
-async function loadTopology() {
+// Populate RG filter from VMs / VNets
+async function populateRgFilter() {
   try {
     const r = await fetch('/api/topology');
     const data = await r.json();
+    const rgs = new Set();
+    (data.nodes || []).forEach(n => { if (n.data.rg) rgs.add(n.data.rg); });
+    const sel = document.getElementById('rg-filter');
+    rgs.forEach(rg => {
+      const opt = document.createElement('option');
+      opt.value = rg; opt.textContent = rg;
+      sel.appendChild(opt);
+    });
+  } catch(e) {}
+}
 
-    if (data.error || (!data.nodes?.length && !data.edges?.length)) {
+async function loadTopology() {
+  const rg = document.getElementById('rg-filter')?.value || '';
+  const url = '/api/topology' + (rg ? '?rg=' + encodeURIComponent(rg) : '');
+  try {
+    const r = await fetch(url);
+    const data = await r.json();
+
+    if (data.error || (!data.nodes?.length)) {
       showFallback(data.error || 'No topology data. Sync the portal first — network resources (VNets, NICs, public IPs) must be synced.');
       return;
     }
 
-    if (data.nodes.length === 0) {
-      showFallback('No resources found in the database. Run a sync first.');
-      return;
+    const statsEl = document.getElementById('topo-stats');
+    if (statsEl) {
+      statsEl.textContent = `${data.node_count || data.nodes.length} nodes · ${data.edge_count || (data.edges||[]).length} edges`;
+      statsEl.style.display = '';
+    }
+
+    if (data.nodes.length > 300) {
+      const banner = document.getElementById('topology-fallback');
+      document.getElementById('topo-error-detail').textContent =
+        `Large graph: ${data.nodes.length} nodes. Use the resource group filter to narrow the view.`;
+      // still render, but warn
     }
 
     renderCytoscape(data.nodes, data.edges || []);
@@ -89,6 +119,7 @@ async function loadTopology() {
     showFallback('Failed to load topology: ' + e.message);
   }
 }
+populateRgFilter();
 
 function renderCytoscape(nodes, edges) {
   document.getElementById('topology-cy').style.display = '';

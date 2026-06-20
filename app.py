@@ -179,20 +179,20 @@ def auth_logout():
 @login_required
 def dashboard():
     try:
-        vm_power = queries.vm_power_summary()
+        stats = queries.dashboard_stats()
         ctx = {
             "sync": queries.last_sync_info(),
-            "vm_power": vm_power,
-            "vm_total": sum(vm_power.values()),
-            "pools": queries.get_elastic_pools(),
+            "stats": stats,
             "mtd_cost": queries.get_mtd_total(),
             "advisor_cats": queries.advisor_category_summary(),
-            "backup_problems": queries.backup_problem_count(),
+            "top_cost_rgs": queries.get_top_cost_resource_groups(6),
+            "recent_activity": queries.get_recent_activity(8),
+            "resource_counts": queries.get_resource_counts_by_type(),
             "health_summary": queries.health_summary(),
         }
     except Exception as exc:
         flash(_rbac_error(exc), "danger")
-        ctx = {"sync": queries.last_sync_info()}
+        ctx = {"sync": queries.last_sync_info(), "stats": {}, "mtd_cost": 0}
     return render_template("dashboard.html", **ctx)
 
 
@@ -555,6 +555,28 @@ def postgresql_view():
     )
 
 
+@app.route("/postgresql/<resource_group>/<server_name>")
+@login_required
+def postgresql_detail(resource_group, server_name):
+    try:
+        server = queries.get_postgresql_server_by_name(resource_group, server_name)
+        if not server:
+            flash(f"PostgreSQL server '{server_name}' not found.", "warning")
+            return redirect(url_for("postgresql_view"))
+        advisor_recs = queries.get_advisor_for_resource(server["server_id"])
+        health_item  = queries.get_health_for_resource(server["server_id"])
+    except Exception as exc:
+        flash(_rbac_error(exc), "danger")
+        return redirect(url_for("postgresql_view"))
+    return render_template(
+        "postgresql_detail.html",
+        server=server,
+        advisor_recs=advisor_recs,
+        health_item=health_item,
+        sync=queries.last_sync_info(),
+    )
+
+
 # ── Security ──────────────────────────────────────────────────────────────────
 
 @app.route("/security")
@@ -586,6 +608,59 @@ def api_security_summary():
     return jsonify(queries.get_security_summary())
 
 
+# ── WAF Center ────────────────────────────────────────────────────────────────
+
+@app.route("/waf")
+@login_required
+def waf_view():
+    try:
+        gateways = queries.get_app_gateways()
+        waf_rules = queries.get_waf_rules()
+        summary = queries.get_waf_summary()
+    except Exception as exc:
+        flash(_rbac_error(exc), "danger")
+        gateways, waf_rules, summary = [], [], {}
+    return render_template(
+        "waf.html",
+        gateways=gateways,
+        waf_rules=waf_rules,
+        summary=summary,
+        sync=queries.last_sync_info(),
+    )
+
+
+# ── Activity Center ───────────────────────────────────────────────────────────
+
+@app.route("/activity")
+@login_required
+def activity_view():
+    rg = request.args.get("rg")
+    caller = request.args.get("caller")
+    status = request.args.get("status")
+    try:
+        events = queries.get_activity_log(resource_group=rg, caller=caller, status=status)
+        summary = queries.activity_summary()
+    except Exception as exc:
+        flash(_rbac_error(exc), "danger")
+        events, summary = [], {}
+    return render_template(
+        "activity.html",
+        events=events,
+        summary=summary,
+        selected_rg=rg,
+        selected_caller=caller,
+        selected_status=status,
+        resource_groups=queries.distinct_resource_groups(),
+        sync=queries.last_sync_info(),
+    )
+
+
+@app.route("/api/activity/summary")
+@login_required
+def api_activity_summary():
+    return jsonify(queries.activity_summary())
+
+
 # ── Topology ──────────────────────────────────────────────────────────────────
 
 @app.route("/topology")
@@ -598,7 +673,25 @@ def topology_view():
 @login_required
 def api_topology():
     try:
-        graph = queries.get_topology_graph()
+        rg = request.args.get("rg")
+        view = request.args.get("view", "all")
+        graph = queries.get_topology_graph(view=view)
+        # Optional resource group filter — keep nodes in RG + their direct neighbors
+        if rg:
+            keep_ids = set()
+            for n in graph["nodes"]:
+                if (n["data"].get("rg") or "").lower() == rg.lower():
+                    keep_ids.add(n["data"]["id"])
+            # Add one hop of neighbors
+            for e in graph["edges"]:
+                if e["data"]["source"] in keep_ids or e["data"]["target"] in keep_ids:
+                    keep_ids.add(e["data"]["source"])
+                    keep_ids.add(e["data"]["target"])
+            graph["nodes"] = [n for n in graph["nodes"] if n["data"]["id"] in keep_ids]
+            graph["edges"] = [e for e in graph["edges"]
+                              if e["data"]["source"] in keep_ids and e["data"]["target"] in keep_ids]
+            graph["node_count"] = len(graph["nodes"])
+            graph["edge_count"] = len(graph["edges"])
         return jsonify(graph)
     except Exception as exc:
         return jsonify({"error": str(exc), "nodes": [], "edges": []}), 200

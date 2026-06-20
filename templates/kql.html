@@ -354,11 +354,15 @@ function exportCSV() {
   a.click();
 }
 
-/* ── Pre-fill resource param from URL ───────────────────────────────── */
+/* ── Pre-fill from URL param or sessionStorage ───────────────────────── */
 (function() {
   const params = new URLSearchParams(location.search);
   const res = params.get('resource');
-  if (res) {
+  const prefill = sessionStorage.getItem('kql_prefill');
+  if (prefill) {
+    sessionStorage.removeItem('kql_prefill');
+    document.getElementById('kql-editor').value = prefill;
+  } else if (res) {
     document.getElementById('kql-editor').value =
       `// Logs for ${res}\nEvent | where Computer contains "${res}" | top 50 by TimeGenerated desc`;
   }
