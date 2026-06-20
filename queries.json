@@ -1,52 +1,152 @@
 [
   {
-    "name": "Azure Activity — Failed operations",
+    "name": "🔴 Failed operations (24h)",
     "description": "All failed ARM operations in the last 24 h",
-    "query": "AzureActivity\n| where ActivityStatusValue == 'Failed'\n| project TimeGenerated, OperationNameValue, ResourceGroup, ResourceId, Caller, Properties\n| top 50 by TimeGenerated desc"
+    "query": "AzureActivity\n| where ActivityStatusValue == 'Failed'\n| where TimeGenerated >= ago(24h)\n| project TimeGenerated, OperationNameValue, ResourceGroup, ResourceId, Caller, Properties\n| order by TimeGenerated desc\n| take 100"
   },
   {
-    "name": "VM errors (Event log)",
-    "description": "Windows Event Log errors from all VMs",
-    "query": "Event\n| where EventLevelName == 'Error'\n| project TimeGenerated, Computer, EventID, RenderedDescription\n| top 50 by TimeGenerated desc"
+    "name": "🔴 Failed sign-ins (Event 4625)",
+    "description": "Windows failed authentication events",
+    "query": "SecurityEvent\n| where EventID == 4625\n| where TimeGenerated >= ago(24h)\n| summarize Attempts=count() by Account, IpAddress, Computer, LogonTypeName\n| order by Attempts desc\n| take 50"
   },
   {
-    "name": "Failed sign-ins (Syslog / Security)",
-    "description": "Failed Windows authentication events (Event ID 4625)",
-    "query": "SecurityEvent\n| where EventID == 4625\n| project TimeGenerated, Computer, Account, IpAddress, LogonTypeName, FailureReason\n| top 50 by TimeGenerated desc"
+    "name": "🔴 Brute-force detection",
+    "description": "Accounts with 10+ failed logins in 1 hour (brute-force indicator)",
+    "query": "SecurityEvent\n| where EventID == 4625\n| where TimeGenerated >= ago(1h)\n| summarize FailCount=count() by Account, IpAddress\n| where FailCount >= 10\n| order by FailCount desc"
   },
   {
-    "name": "Syslog — errors and warnings",
-    "description": "Linux syslog entries at Error or Warning level",
-    "query": "Syslog\n| where SeverityLevel in ('err', 'crit', 'alert', 'emerg', 'warning')\n| project TimeGenerated, Computer, Facility, SeverityLevel, SyslogMessage\n| top 50 by TimeGenerated desc"
+    "name": "🔴 Privilege escalation — admin group changes",
+    "description": "Users added to or removed from privileged groups (Event 4728/4729/4732/4733)",
+    "query": "SecurityEvent\n| where EventID in (4728, 4729, 4732, 4733)\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, EventID, Activity, Account, MemberName, TargetAccount, Computer\n| order by TimeGenerated desc\n| take 50"
   },
   {
-    "name": "NSG flow — denied traffic",
-    "description": "Denied network flows from NSG flow logs (requires NSG flow logs enabled)",
-    "query": "AzureNetworkAnalytics_CL\n| where FlowStatus_s == 'D'\n| project TimeGenerated, SrcIP_s, DestIP_s, DestPort_d, L7Protocol_s, NSGRule_s\n| top 100 by TimeGenerated desc"
+    "name": "🔴 WAF blocked requests",
+    "description": "Application Gateway WAF blocks in the last 24 h",
+    "query": "AzureDiagnostics\n| where ResourceType == 'APPLICATIONGATEWAYS' and OperationName == 'ApplicationGatewayFirewall'\n| where action_s == 'Blocked'\n| where TimeGenerated >= ago(24h)\n| summarize Blocks=count() by hostname_s, requestUri_s, ruleGroup_s, ruleId_s\n| order by Blocks desc\n| take 50"
   },
   {
-    "name": "SQL Audit — failed logins",
-    "description": "SQL Server failed login attempts (requires SQL Audit to Log Analytics)",
-    "query": "AzureDiagnostics\n| where ResourceType == 'SERVERS' and Category == 'SQLSecurityAuditEvents'\n| where action_name_s == 'LOGIN FAILED'\n| project TimeGenerated, LogicalServerName_s, client_ip_s, database_principal_name_s, server_principal_name_s\n| top 50 by TimeGenerated desc"
+    "name": "🔴 WAF top blocked IPs",
+    "description": "Top source IPs blocked by WAF",
+    "query": "AzureDiagnostics\n| where ResourceType == 'APPLICATIONGATEWAYS' and OperationName == 'ApplicationGatewayFirewall'\n| where action_s == 'Blocked'\n| where TimeGenerated >= ago(7d)\n| summarize Blocks=count() by clientIp_s\n| order by Blocks desc\n| take 20"
   },
   {
-    "name": "WAF — blocked requests",
-    "description": "Application Gateway WAF blocks (requires WAF diag settings to workspace)",
-    "query": "AzureDiagnostics\n| where ResourceType == 'APPLICATIONGATEWAYS' and OperationName == 'ApplicationGatewayFirewall'\n| where action_s == 'Blocked'\n| project TimeGenerated, hostname_s, requestUri_s, ruleGroup_s, ruleId_s, clientIp_s\n| top 100 by TimeGenerated desc"
+    "name": "🔴 NSG denied flows",
+    "description": "Denied network flows (requires NSG flow logs to workspace)",
+    "query": "AzureNetworkAnalytics_CL\n| where FlowStatus_s == 'D'\n| where TimeGenerated >= ago(1h)\n| summarize Denials=count() by SrcIP_s, DestPort_d, NSGRule_s, L7Protocol_s\n| order by Denials desc\n| take 50"
   },
   {
-    "name": "Heartbeat — stale agents",
+    "name": "🔴 SQL failed logins",
+    "description": "SQL Server failed login attempts (requires SQL audit to workspace)",
+    "query": "AzureDiagnostics\n| where ResourceType == 'SERVERS' and Category == 'SQLSecurityAuditEvents'\n| where action_name_s == 'LOGIN FAILED'\n| where TimeGenerated >= ago(24h)\n| project TimeGenerated, LogicalServerName_s, client_ip_s, database_principal_name_s\n| order by TimeGenerated desc\n| take 50"
+  },
+  {
+    "name": "🔴 Defender alerts",
+    "description": "Microsoft Defender for Cloud security alerts",
+    "query": "SecurityAlert\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, AlertName, AlertSeverity, ResourceId, Description, ExtendedProperties\n| order by TimeGenerated desc\n| take 50"
+  },
+  {
+    "name": "🟡 Role assignment changes",
+    "description": "Azure RBAC role assignments added or removed (last 7 days)",
+    "query": "AzureActivity\n| where OperationNameValue has 'roleAssignment'\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, OperationNameValue, Caller, ResourceGroup, Properties, ActivityStatusValue\n| order by TimeGenerated desc\n| take 50"
+  },
+  {
+    "name": "🟡 Resource deletions",
+    "description": "All successful resource delete operations (last 7 days)",
+    "query": "AzureActivity\n| where OperationNameValue has 'delete' and ActivityStatusValue == 'Succeeded'\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, OperationNameValue, ResourceGroup, ResourceId, Caller\n| order by TimeGenerated desc\n| take 50"
+  },
+  {
+    "name": "🟡 VM start/stop events",
+    "description": "Virtual machine power operations (start/stop/deallocate) in the last 7 days",
+    "query": "AzureActivity\n| where OperationNameValue has_any ('virtualMachines/start','virtualMachines/deallocate','virtualMachines/powerOff','virtualMachines/restart')\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, OperationNameValue, ResourceGroup, ResourceId, Caller, ActivityStatusValue\n| order by TimeGenerated desc\n| take 50"
+  },
+  {
+    "name": "🟡 NSG rule changes",
+    "description": "Network security group rule modifications in the last 7 days",
+    "query": "AzureActivity\n| where OperationNameValue has 'networkSecurityGroups'\n| where ActivityStatusValue == 'Succeeded'\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, OperationNameValue, ResourceGroup, ResourceId, Caller\n| order by TimeGenerated desc\n| take 50"
+  },
+  {
+    "name": "🟡 Resource creations this month",
+    "description": "All new resources created in the current calendar month",
+    "query": "AzureActivity\n| where OperationNameValue has 'write' and ActivityStatusValue == 'Succeeded'\n| where TimeGenerated >= startofmonth(now())\n| summarize Created=count() by ResourceGroup, Caller\n| order by Created desc\n| take 30"
+  },
+  {
+    "name": "🟡 Stale agent heartbeats",
     "description": "Agents that haven't sent a heartbeat in the last 15 minutes",
-    "query": "Heartbeat\n| summarize LastHeartbeat = max(TimeGenerated) by Computer\n| where LastHeartbeat < ago(15m)\n| order by LastHeartbeat asc"
+    "query": "Heartbeat\n| summarize LastHeartbeat=max(TimeGenerated) by Computer, OSType, ComputerIP\n| where LastHeartbeat < ago(15m)\n| order by LastHeartbeat asc"
   },
   {
-    "name": "AzureActivity — resource changes",
-    "description": "All resource write / delete operations today",
-    "query": "AzureActivity\n| where ActivityStatusValue == 'Succeeded' and OperationNameValue has_any ('write', 'delete')\n| project TimeGenerated, OperationNameValue, ResourceGroup, ResourceId, Caller\n| top 50 by TimeGenerated desc"
+    "name": "🟡 VM errors (Windows Event Log)",
+    "description": "Windows Event Log errors from all VMs",
+    "query": "Event\n| where EventLevelName == 'Error'\n| where TimeGenerated >= ago(24h)\n| summarize Errors=count() by Computer, EventID, RenderedDescription\n| order by Errors desc\n| take 50"
   },
   {
-    "name": "VM performance — top CPU",
-    "description": "Top 10 VMs by average CPU over last hour",
-    "query": "Perf\n| where ObjectName == 'Processor' and CounterName == '% Processor Time' and InstanceName == '_Total'\n| where TimeGenerated >= ago(1h)\n| summarize AvgCPU = avg(CounterValue) by Computer\n| top 10 by AvgCPU desc"
+    "name": "🟡 Syslog errors (Linux)",
+    "description": "Linux syslog entries at Error or Warning level",
+    "query": "Syslog\n| where SeverityLevel in ('err', 'crit', 'alert', 'emerg', 'warning')\n| where TimeGenerated >= ago(24h)\n| summarize Count=count() by Computer, Facility, SeverityLevel, SyslogMessage\n| order by Count desc\n| take 50"
+  },
+  {
+    "name": "🟢 Top CPU VMs (last hour)",
+    "description": "Top 10 VMs by average CPU utilisation over the last hour",
+    "query": "Perf\n| where ObjectName == 'Processor' and CounterName == '% Processor Time' and InstanceName == '_Total'\n| where TimeGenerated >= ago(1h)\n| summarize AvgCPU=avg(CounterValue) by Computer\n| order by AvgCPU desc\n| take 10"
+  },
+  {
+    "name": "🟢 High memory pressure",
+    "description": "VMs with available memory below 500 MB",
+    "query": "Perf\n| where ObjectName == 'Memory' and CounterName in ('Available MBytes', 'Available Bytes')\n| where TimeGenerated >= ago(30m)\n| summarize AvailMB=avg(CounterValue) by Computer\n| where AvailMB < 500\n| order by AvailMB asc"
+  },
+  {
+    "name": "🟢 Disk space low",
+    "description": "Volumes with less than 10% free space",
+    "query": "Perf\n| where ObjectName == 'LogicalDisk' and CounterName == '% Free Space' and InstanceName != '_Total'\n| where TimeGenerated >= ago(30m)\n| summarize FreePct=avg(CounterValue) by Computer, InstanceName\n| where FreePct < 10\n| order by FreePct asc"
+  },
+  {
+    "name": "🟢 SQL slow queries",
+    "description": "Long-running SQL queries (requires SQL Insights / Query Store)",
+    "query": "AzureDiagnostics\n| where ResourceType == 'SERVERS/DATABASES' and Category == 'QueryStoreRuntimeStatistics'\n| where TimeGenerated >= ago(1h)\n| project TimeGenerated, LogicalServerName_s, DatabaseName_s, query_id_d, avg_duration_d\n| order by avg_duration_d desc\n| take 20"
+  },
+  {
+    "name": "🟢 PostgreSQL errors",
+    "description": "PostgreSQL error-level log entries (requires AzureDiagnostics from PG diagnostic settings)",
+    "query": "AzureDiagnostics\n| where ResourceType == 'FLEXIBLESERVERS' and Category == 'PostgreSQLLogs'\n| where TimeGenerated >= ago(24h)\n| where error_severity_s in ('ERROR','FATAL','PANIC')\n| project TimeGenerated, Resource, message_s, error_severity_s\n| order by TimeGenerated desc\n| take 50"
+  },
+  {
+    "name": "🟢 Network bandwidth top VMs",
+    "description": "Top VMs by total network traffic (bytes in + out) over the last hour",
+    "query": "Perf\n| where ObjectName == 'Network Adapter' and CounterName in ('Bytes Received/sec','Bytes Sent/sec')\n| where TimeGenerated >= ago(1h)\n| summarize TotalBytes=sum(CounterValue) by Computer\n| order by TotalBytes desc\n| take 10"
+  },
+  {
+    "name": "🟢 Cost anomaly — daily spike",
+    "description": "Days where cost was 50% above the 7-day average (requires cost export to workspace)",
+    "query": "AzureDiagnostics\n| where ResourceType == 'BILLINGACCOUNTS'\n| summarize DailyCost=sum(todouble(Properties))\n  by bin(TimeGenerated, 1d)\n| extend Rolling7d=series_stats_dynamic(DailyCost)\n| where DailyCost > tolong(Rolling7d.avg) * 1.5\n| order by TimeGenerated desc"
+  },
+  {
+    "name": "🔵 Active directory — locked accounts",
+    "description": "Locked-out user accounts (Event 4740)",
+    "query": "SecurityEvent\n| where EventID == 4740\n| where TimeGenerated >= ago(24h)\n| project TimeGenerated, TargetAccount, Computer, SubjectAccount\n| order by TimeGenerated desc\n| take 50"
+  },
+  {
+    "name": "🔵 Entra sign-ins — guest users",
+    "description": "Sign-in events from guest/external accounts (requires Entra diagnostic logs)",
+    "query": "SigninLogs\n| where UserType == 'Guest'\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, UserDisplayName, UserPrincipalName, IPAddress, Location, AppDisplayName, ResultType, ResultDescription\n| order by TimeGenerated desc\n| take 50"
+  },
+  {
+    "name": "🔵 Update compliance",
+    "description": "VMs missing critical or security updates (requires Update Management)",
+    "query": "Update\n| where Classification in ('Critical Updates','Security Updates') and UpdateState == 'Needed'\n| summarize MissingUpdates=count() by Computer, Classification\n| order by MissingUpdates desc\n| take 30"
+  },
+  {
+    "name": "🔵 Application Gateway access log",
+    "description": "Recent requests through Application Gateway (status, latency, backend)",
+    "query": "AzureDiagnostics\n| where ResourceType == 'APPLICATIONGATEWAYS' and OperationName == 'ApplicationGatewayAccess'\n| where TimeGenerated >= ago(1h)\n| project TimeGenerated, requestUri_s, httpStatus_d, timeTaken_d, clientIP_s, backendPoolName_s, backendHttpSettingsName_s\n| order by TimeGenerated desc\n| take 100"
+  },
+  {
+    "name": "🔵 Key Vault access",
+    "description": "Key Vault secret / key access events (requires Key Vault diagnostic logs)",
+    "query": "AzureDiagnostics\n| where ResourceType == 'VAULTS'\n| where TimeGenerated >= ago(24h)\n| project TimeGenerated, OperationName, ResultType, CallerIPAddress, identity_claim_appid_g, id_s\n| order by TimeGenerated desc\n| take 50"
+  },
+  {
+    "name": "🔵 Storage account access",
+    "description": "Azure Blob Storage access events (requires storage diagnostic logs)",
+    "query": "StorageBlobLogs\n| where TimeGenerated >= ago(24h)\n| summarize Requests=count() by CallerIpAddress, AccountName, OperationName, StatusCode\n| order by Requests desc\n| take 30"
   }
 ]

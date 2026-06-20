@@ -963,6 +963,57 @@ def get_resource_counts_by_type() -> dict:
         conn.close()
 
 
+# ── VM networking ─────────────────────────────────────────────────────────────
+
+def get_nics_for_vm(vm_id: str) -> list[dict]:
+    """Get NICs attached to a VM with associated public IPs."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT n.nic_id, n.name, n.private_ip, n.subnet_id, n.public_ip_id,
+                      p.ip_address AS public_ip, p.name AS pip_name, p.allocation_method
+               FROM nics n
+               LEFT JOIN public_ips p ON LOWER(p.nic_id) = LOWER(n.nic_id)
+               WHERE LOWER(n.vm_id) = LOWER(?)""",
+            (vm_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def get_nsg_rules_for_vm(vm_id: str) -> list[dict]:
+    """Get NSG rules that apply to a VM's NICs (via subnet or NIC-level NSG)."""
+    conn = get_db()
+    try:
+        # Get subnet IDs and NSG IDs for this VM's NICs
+        nic_rows = conn.execute(
+            "SELECT subnet_id FROM nics WHERE LOWER(vm_id) = LOWER(?)", (vm_id,)
+        ).fetchall()
+        subnet_ids = [r["subnet_id"] for r in nic_rows if r["subnet_id"]]
+
+        rules = []
+        if subnet_ids:
+            # Get NSG IDs attached to these subnets
+            for subnet_id in subnet_ids:
+                nsg_row = conn.execute(
+                    "SELECT nsg_id FROM subnets WHERE LOWER(subnet_id) = LOWER(?)", (subnet_id,)
+                ).fetchone()
+                if nsg_row and nsg_row["nsg_id"]:
+                    nsg_rules = conn.execute(
+                        "SELECT * FROM nsg_rules WHERE LOWER(nsg_id) = LOWER(?) ORDER BY direction, priority",
+                        (nsg_row["nsg_id"],),
+                    ).fetchall()
+                    rules.extend([dict(r) for r in nsg_rules])
+        return rules
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
 # ── CMDB ──────────────────────────────────────────────────────────────────────
 
 def get_cmdb_resources(

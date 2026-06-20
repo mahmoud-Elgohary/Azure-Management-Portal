@@ -20,7 +20,11 @@
     <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#0891b2"></div> PostgreSQL</div>
     <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#374151"></div> On-prem (logical)</div>
   </div>
-  <div class="ms-auto d-flex gap-2 flex-wrap">
+  <div class="ms-auto d-flex gap-2 flex-wrap align-items-center">
+    <div class="position-relative">
+      <input type="text" id="node-search" class="form-control form-control-sm" placeholder="Search nodes…" style="width:160px"
+             oninput="searchNodes(this.value)" />
+    </div>
     <select id="rg-filter" class="form-select form-select-sm" style="width:auto" onchange="loadTopology()">
       <option value="">All resource groups</option>
     </select>
@@ -194,6 +198,12 @@ function renderCytoscape(nodes, edges) {
     layout: { name: 'cose', idealEdgeLength: 100, nodeOverlap: 20, refresh: 20, fit: true, padding: 30, randomize: false, componentSpacing: 100, nodeRepulsion: 400000, edgeElasticity: 100, nestingFactor: 5, gravity: 80, numIter: 1000, initialTemp: 200, coolingFactor: 0.95, minTemp: 1.0 }
   });
 
+  applySearchStyles();
+
+  // Re-apply search if user typed before graph loaded
+  const existingSearch = document.getElementById('node-search').value;
+  if (existingSearch) searchNodes(existingSearch);
+
   // Click node → show detail panel
   cy.on('tap', 'node', function(e) {
     const d = e.target.data();
@@ -249,8 +259,45 @@ function showFallback(msg) {
 
 function fitGraph() { if (cy) cy.fit(30); }
 
+function searchNodes(q) {
+  if (!cy) return;
+  q = (q || '').trim().toLowerCase();
+  if (!q) {
+    cy.nodes().removeClass('search-dim search-match');
+    cy.edges().removeClass('search-dim');
+    return;
+  }
+  cy.nodes().forEach(node => {
+    const label = (node.data('label') || '').toLowerCase();
+    const id    = (node.data('id') || '').toLowerCase();
+    const match = label.includes(q) || id.includes(q);
+    node.removeClass('search-dim search-match');
+    node.addClass(match ? 'search-match' : 'search-dim');
+  });
+  cy.edges().addClass('search-dim');
+
+  // Pan/zoom to first match
+  const matched = cy.nodes('.search-match');
+  if (matched.length) cy.fit(matched, 80);
+}
+
+// Add search-dim / search-match styles dynamically
+function applySearchStyles() {
+  if (!cy) return;
+  cy.style()
+    .selector('node.search-dim').style({ opacity: 0.15 })
+    .selector('edge.search-dim').style({ opacity: 0.08 })
+    .selector('node.search-match').style({ 'border-color': '#f59e0b', 'border-width': 4 })
+    .update();
+}
+
 document.getElementById('layout-picker').addEventListener('change', function() {
   if (cy) cy.layout({ name: this.value, fit: true, padding: 30 }).run();
+});
+
+// Clear search on Escape key
+document.getElementById('node-search').addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') { this.value = ''; searchNodes(''); }
 });
 
 loadTopology();

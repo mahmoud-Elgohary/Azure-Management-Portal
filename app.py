@@ -233,6 +233,8 @@ def vm_detail(resource_group, vm_name):
         advisor_recs = queries.get_advisor_for_resource(vm["vm_id"])
         backup_item  = queries.get_backup_for_vm(vm_name)
         health_item  = queries.get_health_for_resource(vm["vm_id"])
+        nics         = queries.get_nics_for_vm(vm["vm_id"])
+        nsg_rules    = queries.get_nsg_rules_for_vm(vm["vm_id"])
     except Exception as exc:
         flash(_rbac_error(exc), "danger")
         return redirect(url_for("vms"))
@@ -242,6 +244,8 @@ def vm_detail(resource_group, vm_name):
         advisor_recs=advisor_recs,
         backup_item=backup_item,
         health_item=health_item,
+        nics=nics,
+        nsg_rules=nsg_rules,
         sync=queries.last_sync_info(),
     )
 

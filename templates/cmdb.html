@@ -79,8 +79,22 @@
         </thead>
         <tbody>
           {% for r in resources %}
-          <tr>
-            <td class="fw-500">{{ r.name or '—' }}</td>
+          {% set detail_url = none %}
+          {% if r.type == 'Virtual Machine' and r.resource_group %}
+            {% set detail_url = url_for('vm_detail', resource_group=r.resource_group, vm_name=r.name) %}
+          {% elif r.type == 'SQL Server' and r.resource_group %}
+            {% set detail_url = url_for('sql_detail', resource_group=r.resource_group, server_name=r.name) %}
+          {% elif r.type == 'PostgreSQL Server' and r.resource_group %}
+            {% set detail_url = url_for('postgresql_detail', resource_group=r.resource_group, server_name=r.name) %}
+          {% endif %}
+          <tr {% if detail_url %}style="cursor:pointer" onclick="location.href='{{ detail_url }}'"{% endif %}>
+            <td class="fw-500">
+              {% if detail_url %}
+              <a href="{{ detail_url }}" class="text-decoration-none">{{ r.name or '—' }}</a>
+              {% else %}
+              {{ r.name or '—' }}
+              {% endif %}
+            </td>
             <td><span class="type-pill">{{ r.type }}</span></td>
             <td><small>{{ r.resource_group or '—' }}</small></td>
             <td><small class="text-muted">{{ r.location or '—' }}</small></td>
@@ -101,7 +115,10 @@
               <small class="text-muted font-monospace" style="font-size:.7rem">{{ r.tags[:60] }}{% if r.tags|length > 60 %}…{% endif %}</small>
               {% else %}<span class="text-muted small">—</span>{% endif %}
             </td>
-            <td><small class="text-muted">{{ (r.synced_at or '')[:10] }}</small></td>
+            <td>
+              <small class="text-muted">{{ (r.synced_at or '')[:10] }}</small>
+              {% if detail_url %}<a href="{{ detail_url }}" class="ms-1 text-link small" onclick="event.stopPropagation()"><i class="bi bi-arrow-right-circle"></i></a>{% endif %}
+            </td>
           </tr>
           {% endfor %}
         </tbody>
