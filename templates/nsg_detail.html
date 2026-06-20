@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}{{ nsg.name }} — NSG — WTS Azure Manager{% endblock %}
+{% block page_title %}NSG: {{ nsg.name }}{% endblock %}
+
+{% block content %}
+
+<!-- Breadcrumb -->
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{{ url_for('nsgs_view') }}">NSGs</a></li>
+    <li class="breadcrumb-item active">{{ nsg.name }}</li>
+  </ol>
+</nav>
+
+<!-- Header meta -->
+<div class="card mb-3">
+  <div class="card-body py-2 d-flex flex-wrap gap-3 align-items-center">
+    <div>
+      <i class="bi bi-shield-lock text-primary me-1"></i>
+      <span class="fw-bold">{{ nsg.name }}</span>
+    </div>
+    <div class="text-muted small">
+      <i class="bi bi-folder2 me-1"></i>{{ nsg.resource_group }}
+    </div>
+    <div class="text-muted small">
+      <i class="bi bi-geo-alt me-1"></i>{{ nsg.location or '—' }}
+    </div>
+    <div class="ms-auto">
+      <span class="badge bg-secondary me-1">{{ rules | length }} rules</span>
+      {% set open_count = rules | selectattr('source_prefix', 'in', ['*','Any','Internet','0.0.0.0/0']) | selectattr('direction', 'equalto', 'Inbound') | selectattr('access', 'equalto', 'Allow') | list | length %}
+      {% if open_count > 0 %}
+      <span class="badge bg-danger">{{ open_count }} open inbound</span>
+      {% else %}
+      <span class="badge bg-success">No open inbound</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Filter buttons -->
+<div class="d-flex gap-2 mb-3 align-items-center">
+  <span class="text-muted small">Filter:</span>
+  <button class="btn btn-sm btn-dark" onclick="filterRules('all')">All</button>
+  <button class="btn btn-sm btn-outline-primary" onclick="filterRules('Inbound')">Inbound</button>
+  <button class="btn btn-sm btn-outline-secondary" onclick="filterRules('Outbound')">Outbound</button>
+  <button class="btn btn-sm btn-outline-danger" onclick="filterRules('open')">Open Only</button>
+  <span class="ms-auto text-muted small" id="rule-count">{{ rules | length }} rules</span>
+</div>
+
+{% if rules %}
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0" id="rules-table">
+      <thead class="table-dark">
+        <tr>
+          <th>Priority</th>
+          <th>Name</th>
+          <th>Direction</th>
+          <th>Access</th>
+          <th>Protocol</th>
+          <th>Source</th>
+          <th>Src Port</th>
+          <th>Destination</th>
+          <th>Dst Port</th>
+          <th>Risk</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rules | sort(attribute='priority') %}
+        {% set is_open = r.direction == 'Inbound' and r.access == 'Allow' and r.source_prefix in ('*','Any','Internet','0.0.0.0/0') %}
+        <tr class="rule-row
+            {% if is_open %}table-danger open-rule{% endif %}"
+            data-dir="{{ r.direction }}"
+            data-access="{{ r.access }}"
+            data-open="{{ 'true' if is_open else 'false' }}">
+          <td><code>{{ r.priority }}</code></td>
+          <td><span style="font-size:.82rem">{{ r.name }}</span></td>
+          <td>
+            <span class="badge {% if r.direction == 'Inbound' %}bg-primary{% else %}bg-secondary{% endif %}">
+              {{ r.direction }}
+            </span>
+          </td>
+          <td>
+            <span class="badge {% if r.access == 'Allow' %}bg-success{% else %}bg-danger{% endif %}">
+              {{ r.access }}
+            </span>
+          </td>
+          <td><small>{{ r.protocol or '*' }}</small></td>
+          <td>
+            <code style="font-size:.78rem
+              {% if r.source_prefix in ('*','Any','Internet','0.0.0.0/0') and r.direction == 'Inbound' and r.access == 'Allow' %}; color:#dc2626{% endif %}">
+              {{ r.source_prefix or '*' }}
+            </code>
+          </td>
+          <td><small>{{ r.source_port_range or '*' }}</small></td>
+          <td><code style="font-size:.78rem">{{ r.destination_prefix or '*' }}</code></td>
+          <td>
+            <strong style="font-size:.82rem">{{ r.destination_port_range or '*' }}</strong>
+          </td>
+          <td>
+            {% if is_open %}
+            <span class="badge bg-danger"><i class="bi bi-exclamation-triangle me-1"></i>Open</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="no-data-banner">
+  <i class="bi bi-shield-lock"></i>
+  No rules found for this NSG.
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function filterRules(mode) {
+  const rows = document.querySelectorAll('.rule-row');
+  let visible = 0;
+  rows.forEach(r => {
+    let show = true;
+    if (mode === 'Inbound')  show = r.dataset.dir === 'Inbound';
+    if (mode === 'Outbound') show = r.dataset.dir === 'Outbound';
+    if (mode === 'open')     show = r.dataset.open === 'true';
+    r.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+  document.getElementById('rule-count').textContent = visible + ' rules';
+  document.querySelectorAll('.d-flex.gap-2 .btn').forEach(b => b.classList.replace('btn-dark','btn-outline-secondary'));
+  event.currentTarget.className = event.currentTarget.className
+    .replace('btn-outline-primary','btn-primary')
+    .replace('btn-outline-secondary','btn-dark')
+    .replace('btn-outline-danger','btn-danger');
+}
+</script>
+{% endblock %}

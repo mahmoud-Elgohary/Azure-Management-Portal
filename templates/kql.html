@@ -41,16 +41,26 @@
           </button>
         </div>
         {% if blitz %}
+          {% set ns = namespace(current_cat='') %}
+          {% set cat_labels = {'🔴': 'Security', '🟡': 'Operations', '🟢': 'Performance', '🔵': 'Compliance'} %}
           {% for q in blitz %}
-          <a class="blitz-query-item d-flex align-items-start gap-1" href="#"
-             onclick="loadBlitz({{ q.query | tojson }}); return false;"
-             title="{{ q.description or '' }}">
-            <i class="bi bi-terminal mt-1"></i>
-            <div>
-              <div>{{ q.name }}</div>
-              {% if q.description %}<small class="text-muted">{{ q.description[:60] }}</small>{% endif %}
-            </div>
-          </a>
+            {% set first_char = q.name[:2] %}
+            {% set cat = cat_labels.get(first_char, '') %}
+            {% if cat and cat != ns.current_cat %}
+              {% set ns.current_cat = cat %}
+              <div class="text-muted" style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin:.5rem 0 .2rem .25rem">
+                {{ first_char }} {{ cat }}
+              </div>
+            {% endif %}
+            <a class="blitz-query-item d-flex align-items-start gap-1" href="#"
+               onclick="loadBlitz({{ q.query | tojson }}); return false;"
+               title="{{ q.description or '' }}">
+              <i class="bi bi-terminal mt-1 flex-shrink-0"></i>
+              <div>
+                <div style="font-size:.83rem">{{ q.name[2:] | trim }}</div>
+                {% if q.description %}<small class="text-muted">{{ q.description[:55] }}</small>{% endif %}
+              </div>
+            </a>
           {% endfor %}
         {% else %}
         <div class="text-muted small p-2">No saved queries. Run a query and click Save.</div>

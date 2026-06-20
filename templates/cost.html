@@ -12,11 +12,27 @@
 <div class="row g-3 mb-4">
   <div class="col-6 col-lg-3">
     <div class="card kpi-card">
-      <div class="kpi-value text-success">€{{ mtd }}</div>
+      <div class="kpi-value text-success">{{ currency }}{{ "%.2f"|format(mtd) }}</div>
       <div class="kpi-label">Month-to-Date</div>
       <div class="kpi-sub">Current month spend</div>
     </div>
   </div>
+  {% if budget > 0 %}
+  <div class="col-6 col-lg-3">
+    {% set pct = [(mtd / budget * 100), 100] | min | int %}
+    <div class="card kpi-card">
+      <div class="kpi-value {% if pct >= 90 %}text-danger{% elif pct >= 75 %}text-warning{% else %}text-success{% endif %}">
+        {{ pct }}%
+      </div>
+      <div class="kpi-label">Budget Used</div>
+      <div class="progress mt-1" style="height:6px">
+        <div class="progress-bar {% if pct >= 90 %}bg-danger{% elif pct >= 75 %}bg-warning{% else %}bg-success{% endif %}"
+             style="width:{{ pct }}%"></div>
+      </div>
+      <div class="kpi-sub mt-1">of {{ currency }}{{ "%.0f"|format(budget) }} budget</div>
+    </div>
+  </div>
+  {% else %}
   <div class="col-6 col-lg-3">
     <div class="card kpi-card">
       <div class="kpi-value text-primary" id="kpi-rg-count">—</div>
@@ -24,6 +40,7 @@
       <div class="kpi-sub">with spend this month</div>
     </div>
   </div>
+  {% endif %}
   <div class="col-6 col-lg-3">
     <div class="card kpi-card">
       <div class="kpi-value {% if anomalies %}text-danger{% else %}text-success{% endif %}">
@@ -46,7 +63,7 @@
 <div class="alert alert-danger alert-dismissible fade show mb-4" role="alert">
   <strong><i class="bi bi-exclamation-triangle me-1"></i>Cost Anomalies Detected</strong>
   {% for a in anomalies %}
-    <div class="small mt-1">{{ a.date }}: <strong>€{{ "%.2f"|format(a.cost) }}</strong> vs avg €{{ "%.2f"|format(a.avg) }} ({{ ((a.cost/a.avg - 1)*100)|int }}% above average)</div>
+    <div class="small mt-1">{{ a.date }}: <strong>{{ currency }}{{ "%.2f"|format(a.cost) }}</strong> vs avg {{ currency }}{{ "%.2f"|format(a.avg) }} ({{ ((a.cost/a.avg - 1)*100)|int }}% above average)</div>
   {% endfor %}
   <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
 </div>
@@ -127,7 +144,7 @@
           <tr>
             <td>{{ row.date }}</td>
             <td>{{ row.resource_group or '(unassigned)' }}</td>
-            <td class="fw-500">€{{ "%.4f"|format(row.cost) }}</td>
+            <td class="fw-500">{{ currency }}{{ "%.4f"|format(row.cost) }}</td>
             <td><small class="text-muted">{{ row.currency }}</small></td>
           </tr>
           {% endfor %}
@@ -147,6 +164,8 @@
 
 {% block scripts %}
 <script>
+const CURRENCY = {{ currency | tojson }};
+
 async function loadCharts() {
   const [trendResp, rgResp] = await Promise.all([
     fetch('/api/cost/trend'),
@@ -156,10 +175,11 @@ async function loadCharts() {
   const rgData = await rgResp.json();
 
   // Update KPI cards
-  document.getElementById('kpi-rg-count').textContent = rgData.length;
+  const kpiRgCount = document.getElementById('kpi-rg-count');
+  if (kpiRgCount) kpiRgCount.textContent = rgData.length;
   if (rgData.length) {
     document.getElementById('kpi-top-rg').textContent = rgData[0].resource_group || '(unassigned)';
-    document.getElementById('kpi-top-rg-cost').textContent = '€' + (rgData[0].total || 0).toFixed(2) + ' MTD';
+    document.getElementById('kpi-top-rg-cost').textContent = CURRENCY + (rgData[0].total || 0).toFixed(2) + ' MTD';
   }
 
   // Daily trend chart
@@ -184,7 +204,7 @@ async function loadCharts() {
       plugins: { legend: { display: false } },
       scales: {
         x: { ticks: { maxTicksLimit: 12, font: { size: 10 } } },
-        y: { ticks: { font: { size: 10 }, callback: v => '€' + v.toFixed(0) } }
+        y: { ticks: { font: { size: 10 }, callback: v => CURRENCY + v.toFixed(0) } }
       }
     }
   });
@@ -211,7 +231,7 @@ async function loadCharts() {
       responsive: true, maintainAspectRatio: false,
       plugins: {
         legend: { position: 'bottom', labels: { font: { size: 10 }, boxWidth: 10 } },
-        tooltip: { callbacks: { label: ctx => ` €${ctx.parsed.toFixed(2)}` } }
+        tooltip: { callbacks: { label: ctx => ` ${CURRENCY}${ctx.parsed.toFixed(2)}` } }
       }
     }
   });

@@ -963,6 +963,93 @@ def get_resource_counts_by_type() -> dict:
         conn.close()
 
 
+# ── VM list with IPs ─────────────────────────────────────────────────────────
+
+def get_vms_with_ips(resource_group: str = None, tag_filter: str = None, power_state: str = None) -> list[dict]:
+    """VMs joined with their primary NIC's private + public IP."""
+    conn = get_db()
+    sql = """
+        SELECT v.*,
+               n.private_ip,
+               p.ip_address AS public_ip
+        FROM vms v
+        LEFT JOIN nics n ON LOWER(n.vm_id) = LOWER(v.vm_id)
+        LEFT JOIN public_ips p ON LOWER(p.nic_id) = LOWER(n.nic_id)
+        WHERE 1=1
+    """
+    params: list = []
+    if resource_group:
+        sql += " AND v.resource_group = ?"
+        params.append(resource_group)
+    if tag_filter:
+        sql += " AND v.tags LIKE ?"
+        params.append(f"%{tag_filter}%")
+    if power_state:
+        sql += " AND v.power_state = ?"
+        params.append(power_state)
+    sql += " ORDER BY v.name"
+    try:
+        rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    return rows
+
+
+# ── NSG list ──────────────────────────────────────────────────────────────────
+
+def get_nsgs_with_rule_counts() -> list[dict]:
+    """NSGs with their rule counts and open-inbound count."""
+    conn = get_db()
+    try:
+        rows = conn.execute("""
+            SELECT n.nsg_id, n.name, n.resource_group, n.location, n.synced_at,
+                   COUNT(r.rule_id) AS rule_count,
+                   SUM(CASE WHEN r.direction='Inbound' AND r.access='Allow' THEN 1 ELSE 0 END) AS inbound_allow,
+                   SUM(CASE WHEN r.direction='Inbound' AND r.access='Allow'
+                            AND r.source_prefix IN ('*','Any','Internet','0.0.0.0/0') THEN 1 ELSE 0 END) AS open_inbound
+            FROM nsgs n
+            LEFT JOIN nsg_rules r ON LOWER(r.nsg_id) = LOWER(n.nsg_id)
+            GROUP BY n.nsg_id
+            ORDER BY open_inbound DESC, n.name
+        """).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def get_nsg_by_name(resource_group: str, name: str) -> dict | None:
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM nsgs WHERE LOWER(resource_group)=LOWER(?) AND LOWER(name)=LOWER(?)",
+            (resource_group, name),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+# ── Cost currency ─────────────────────────────────────────────────────────────
+
+def get_cost_currency() -> str:
+    """Most-used currency string in cost_daily, defaults to EUR."""
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT currency FROM cost_daily WHERE currency IS NOT NULL "
+            "GROUP BY currency ORDER BY COUNT(*) DESC LIMIT 1"
+        ).fetchone()
+        return row["currency"] if row else "EUR"
+    except Exception:
+        return "EUR"
+    finally:
+        conn.close()
+
+
 # ── VM networking ─────────────────────────────────────────────────────────────
 
 def get_nics_for_vm(vm_id: str) -> list[dict]:

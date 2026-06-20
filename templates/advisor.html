@@ -3,56 +3,102 @@
 {% block page_title %}Azure Advisor{% endblock %}
 
 {% block content %}
-<h5 class="mb-3">Advisor Recommendations</h5>
 
-<!-- Category filter pills -->
-<div class="mb-3">
-  <a href="{{ url_for('advisor_view') }}" class="btn btn-sm {% if not selected_category %}btn-dark{% else %}btn-outline-dark{% endif %} me-1">All</a>
-  {% for cat, cnt in summary.items() %}
-    <a href="{{ url_for('advisor_view', category=cat) }}"
-       class="btn btn-sm me-1
-         {% if selected_category == cat %}
-           {% if cat == 'Cost' %}btn-warning
-           {% elif cat == 'Security' %}btn-danger
-           {% elif cat == 'Reliability' %}btn-primary
-           {% elif cat == 'Performance' %}btn-info
-           {% else %}btn-secondary{% endif %}
-         {% else %}btn-outline-secondary{% endif %}">
-      {{ cat }} ({{ cnt }})
+<!-- Category KPI cards -->
+<div class="row g-3 mb-3">
+  {% set cat_icons = {'Cost': 'bi-piggy-bank', 'Security': 'bi-shield-exclamation', 'Reliability': 'bi-heart-pulse', 'Performance': 'bi-speedometer2', 'OperationalExcellence': 'bi-gear'} %}
+  {% set cat_colors = {'Cost': 'text-warning', 'Security': 'text-danger', 'Reliability': 'text-primary', 'Performance': 'text-info', 'OperationalExcellence': 'text-secondary'} %}
+  {% set total_recs = summary.values() | sum %}
+  <div class="col-6 col-lg-2">
+    <a href="{{ url_for('advisor_view') }}" class="kpi-link">
+      <div class="card kpi-card {% if not selected_category %}border-dark{% endif %}">
+        <div class="kpi-value">{{ total_recs }}</div>
+        <div class="kpi-label">All</div>
+      </div>
     </a>
+  </div>
+  {% for cat, cnt in summary.items() %}
+  <div class="col-6 col-lg-2">
+    <a href="{{ url_for('advisor_view', category=cat) }}" class="kpi-link">
+      <div class="card kpi-card {% if selected_category == cat %}border-dark{% endif %}">
+        <div class="kpi-value {{ cat_colors.get(cat, 'text-secondary') }}">{{ cnt }}</div>
+        <div class="kpi-label">
+          <i class="bi {{ cat_icons.get(cat, 'bi-lightbulb') }} me-1"></i>{{ cat }}
+        </div>
+      </div>
+    </a>
+  </div>
   {% endfor %}
 </div>
 
+<!-- Impact filter + count -->
+<div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+  <span class="text-muted small">Impact:</span>
+  <a href="{{ url_for('advisor_view', category=selected_category) }}"
+     class="btn btn-sm {% if not selected_impact %}btn-dark{% else %}btn-outline-dark{% endif %}">All</a>
+  <a href="{{ url_for('advisor_view', category=selected_category, impact='High') }}"
+     class="btn btn-sm {% if selected_impact == 'High' %}btn-danger{% else %}btn-outline-danger{% endif %}">High</a>
+  <a href="{{ url_for('advisor_view', category=selected_category, impact='Medium') }}"
+     class="btn btn-sm {% if selected_impact == 'Medium' %}btn-warning{% else %}btn-outline-warning{% endif %}">Medium</a>
+  <a href="{{ url_for('advisor_view', category=selected_category, impact='Low') }}"
+     class="btn btn-sm {% if selected_impact == 'Low' %}btn-secondary{% else %}btn-outline-secondary{% endif %}">Low</a>
+  <span class="ms-auto text-muted small">{{ recs | length }} recommendation{% if recs | length != 1 %}s{% endif %}</span>
+</div>
+
 {% if recs %}
-<div class="table-responsive">
-  <table class="table table-hover table-sm">
-    <thead class="table-dark">
-      <tr><th>Category</th><th>Impact</th><th>Problem</th><th>Solution</th><th>Resource</th><th>Updated</th></tr>
-    </thead>
-    <tbody>
-      {% for r in recs %}
-      <tr>
-        <td>
-          <span class="badge
-            {% if r.category == 'Cost' %}bg-warning text-dark
-            {% elif r.category == 'Security' %}bg-danger
-            {% elif r.category == 'Reliability' %}bg-primary
-            {% elif r.category == 'Performance' %}bg-info text-dark
-            {% else %}bg-secondary{% endif %}">
-            {{ r.category }}
-          </span>
-        </td>
-        <td><span class="badge {% if r.impact == 'High' %}bg-danger{% elif r.impact == 'Medium' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ r.impact }}</span></td>
-        <td>{{ r.short_description or '—' }}</td>
-        <td><small>{{ r.solution or '—' }}</small></td>
-        <td><small class="text-muted">{{ (r.resource_id or '').split('/')[-1] }}</small></td>
-        <td><small>{{ (r.last_updated or '')[:10] }}</small></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover table-sm align-middle mb-0">
+      <thead class="table-dark">
+        <tr>
+          <th>Category</th>
+          <th>Impact</th>
+          <th>Problem</th>
+          <th>Solution</th>
+          <th>Resource</th>
+          <th>Updated</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in recs %}
+        <tr>
+          <td>
+            <span class="badge
+              {% if r.category == 'Cost' %}bg-warning text-dark
+              {% elif r.category == 'Security' %}bg-danger
+              {% elif r.category == 'Reliability' %}bg-primary
+              {% elif r.category == 'Performance' %}bg-info text-dark
+              {% else %}bg-secondary{% endif %}">
+              {{ r.category }}
+            </span>
+          </td>
+          <td>
+            <span class="badge
+              {% if r.impact == 'High' %}bg-danger
+              {% elif r.impact == 'Medium' %}bg-warning text-dark
+              {% else %}bg-secondary{% endif %}">
+              {{ r.impact }}
+            </span>
+          </td>
+          <td><small>{{ r.short_description or '—' }}</small></td>
+          <td><small class="text-muted">{{ (r.solution or '')[:100] }}</small></td>
+          <td><code style="font-size:.75rem">{{ (r.resource_id or '').split('/')[-1][:40] }}</code></td>
+          <td><small class="text-muted">{{ (r.last_updated or '')[:10] }}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 {% else %}
-  <div class="alert alert-success">No recommendations found — or sync not yet run.</div>
+<div class="no-data-banner">
+  <i class="bi bi-lightbulb"></i>
+  {% if selected_category or selected_impact %}
+    No recommendations match the current filters.
+    <a href="{{ url_for('advisor_view') }}">Clear filters</a>
+  {% else %}
+    No Advisor recommendations found — or sync not yet run.
+  {% endif %}
+</div>
 {% endif %}
 {% endblock %}

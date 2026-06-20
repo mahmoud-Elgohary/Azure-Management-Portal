@@ -4,14 +4,61 @@
 
 {% block content %}
 
+<!-- KPI row -->
+{% set total = power_summary.values() | sum %}
+<div class="row g-3 mb-3">
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-primary">{{ total }}</div>
+      <div class="kpi-label">Total VMs</div>
+      <div class="kpi-sub">All power states</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <a href="{{ url_for('vms', state='running') }}" class="kpi-link">
+      <div class="card kpi-card">
+        <div class="kpi-value text-success">{{ power_summary.get('running', 0) }}</div>
+        <div class="kpi-label">Running</div>
+        <div class="kpi-sub">Click to filter</div>
+      </div>
+    </a>
+  </div>
+  <div class="col-6 col-lg-3">
+    <a href="{{ url_for('vms', state='deallocated') }}" class="kpi-link">
+      <div class="card kpi-card">
+        <div class="kpi-value text-secondary">{{ power_summary.get('deallocated', 0) }}</div>
+        <div class="kpi-label">Deallocated</div>
+        <div class="kpi-sub">Not incurring compute cost</div>
+      </div>
+    </a>
+  </div>
+  <div class="col-6 col-lg-3">
+    <a href="{{ url_for('vms', state='stopped') }}" class="kpi-link">
+      <div class="card kpi-card">
+        <div class="kpi-value {% if power_summary.get('stopped',0) %}text-warning{% else %}text-muted{% endif %}">{{ power_summary.get('stopped', 0) }}</div>
+        <div class="kpi-label">Stopped</div>
+        <div class="kpi-sub">⚠ Still incurring compute cost</div>
+      </div>
+    </a>
+  </div>
+</div>
+
 <!-- Filters -->
-<form class="row g-2 mb-3" method="get">
+<form class="row g-2 align-items-center mb-3" method="get">
   <div class="col-auto">
-    <select name="rg" class="form-select form-select-sm">
+    <select name="rg" class="form-select form-select-sm" onchange="this.form.submit()">
       <option value="">All Resource Groups</option>
       {% for rg in resource_groups %}
         <option value="{{ rg }}" {% if rg == selected_rg %}selected{% endif %}>{{ rg }}</option>
       {% endfor %}
+    </select>
+  </div>
+  <div class="col-auto">
+    <select name="state" class="form-select form-select-sm" onchange="this.form.submit()">
+      <option value="">All states</option>
+      <option value="running"     {% if selected_state == 'running' %}selected{% endif %}>Running</option>
+      <option value="deallocated" {% if selected_state == 'deallocated' %}selected{% endif %}>Deallocated</option>
+      <option value="stopped"     {% if selected_state == 'stopped' %}selected{% endif %}>Stopped</option>
     </select>
   </div>
   <div class="col-auto">
@@ -30,13 +77,15 @@
 <div class="card">
   <div class="table-responsive">
     <table class="table table-hover table-sm align-middle mb-0">
-      <thead class="table-light">
+      <thead class="table-dark">
         <tr>
           <th>Name</th>
           <th>Resource Group</th>
           <th>Location</th>
           <th>Size</th>
           <th>OS</th>
+          <th>Private IP</th>
+          <th>Public IP</th>
           <th>Power State</th>
           <th>CPU %</th>
         </tr>
@@ -49,10 +98,22 @@
               <i class="bi bi-server me-1 text-primary" style="font-size:.85rem"></i>{{ vm.name }}
             </a>
           </td>
-          <td>{{ vm.resource_group }}</td>
-          <td>{{ vm.location }}</td>
-          <td><code>{{ vm.vm_size or '—' }}</code></td>
-          <td>{{ vm.os_type or '—' }}</td>
+          <td><small>{{ vm.resource_group }}</small></td>
+          <td><small>{{ vm.location }}</small></td>
+          <td><code style="font-size:.78rem">{{ vm.vm_size or '—' }}</code></td>
+          <td>
+            <span class="badge bg-secondary bg-opacity-50 text-dark">{{ vm.os_type or '—' }}</span>
+          </td>
+          <td>
+            {% if vm.private_ip %}
+            <code style="font-size:.8rem">{{ vm.private_ip }}</code>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td>
+            {% if vm.public_ip %}
+            <code class="text-warning" style="font-size:.8rem">{{ vm.public_ip }}</code>
+            {% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
           <td>
             <span class="badge
               {% if vm.power_state == 'running' %}bg-success
@@ -82,7 +143,11 @@
 {% else %}
 <div class="no-data-banner">
   <i class="bi bi-server"></i>
+  {% if selected_state or selected_rg or selected_tag %}
+  No VMs match the current filters. <a href="{{ url_for('vms') }}">Clear filters</a>
+  {% else %}
   No VMs found. Run a sync first.
+  {% endif %}
 </div>
 {% endif %}
 {% endblock %}

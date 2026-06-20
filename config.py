@@ -63,3 +63,7 @@ if not LOG_ANALYTICS_WORKSPACES and LOG_ANALYTICS_WORKSPACE_ID:
 
 # ── Sync rate limit ───────────────────────────────────────────────────────────
 MIN_SYNC_INTERVAL_MINUTES = int(os.environ.get("MIN_SYNC_INTERVAL_MINUTES", 5))
+
+# ── Cost budget ───────────────────────────────────────────────────────────────
+# Set MONTHLY_BUDGET_EUR=5000 in .env to enable the budget KPI on the Cost page.
+MONTHLY_BUDGET = float(os.environ.get("MONTHLY_BUDGET_EUR", 0))

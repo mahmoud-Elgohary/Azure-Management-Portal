@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Network Security Groups — WTS Azure Manager{% endblock %}
+{% block page_title %}Network Security Groups{% endblock %}
+
+{% block content %}
+
+<!-- KPI row -->
+{% set open_nsgs = nsgs | selectattr('open_inbound', 'gt', 0) | list | length %}
+<div class="row g-3 mb-3">
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-primary">{{ nsgs | length }}</div>
+      <div class="kpi-label">Total NSGs</div>
+      <div class="kpi-sub">Across all subscriptions</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value {% if open_nsgs %}text-danger{% else %}text-success{% endif %}">{{ open_nsgs }}</div>
+      <div class="kpi-label">Open Inbound</div>
+      <div class="kpi-sub">NSGs with internet-exposed rules</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-secondary">{{ nsgs | sum(attribute='rule_count') }}</div>
+      <div class="kpi-label">Total Rules</div>
+      <div class="kpi-sub">Across all NSGs</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-warning">{{ nsgs | sum(attribute='inbound_allow') }}</div>
+      <div class="kpi-label">Inbound Allow Rules</div>
+      <div class="kpi-sub">All inbound permit rules</div>
+    </div>
+  </div>
+</div>
+
+<!-- Filters -->
+<form class="row g-2 align-items-center mb-3" method="get">
+  <div class="col-auto">
+    <select name="rg" class="form-select form-select-sm" onchange="this.form.submit()">
+      <option value="">All Resource Groups</option>
+      {% for rg in resource_groups %}
+        <option value="{{ rg }}" {% if rg == rg_filter %}selected{% endif %}>{{ rg }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-auto">
+    <button type="submit" class="btn btn-sm btn-primary">Filter</button>
+    <a href="{{ url_for('nsgs_view') }}" class="btn btn-sm btn-outline-secondary">Clear</a>
+  </div>
+  <div class="col-auto ms-auto">
+    <span class="text-muted small">{{ nsgs | length }} NSGs</span>
+  </div>
+</form>
+
+{% if nsgs %}
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover table-sm align-middle mb-0">
+      <thead class="table-dark">
+        <tr>
+          <th>Name</th>
+          <th>Resource Group</th>
+          <th>Location</th>
+          <th class="text-center">Rules</th>
+          <th class="text-center">Inbound Allow</th>
+          <th class="text-center">Open Inbound</th>
+          <th>Last Synced</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for nsg in nsgs %}
+        <tr class="{% if nsg.open_inbound > 0 %}table-warning{% endif %}"
+            onclick="location.href='{{ url_for('nsg_detail', resource_group=nsg.resource_group, nsg_name=nsg.name) }}'"
+            style="cursor:pointer">
+          <td>
+            <i class="bi bi-shield-lock me-1 text-primary" style="font-size:.85rem"></i>
+            <span class="fw-500">{{ nsg.name }}</span>
+          </td>
+          <td><small>{{ nsg.resource_group }}</small></td>
+          <td><small>{{ nsg.location or '—' }}</small></td>
+          <td class="text-center"><span class="badge bg-secondary">{{ nsg.rule_count }}</span></td>
+          <td class="text-center"><span class="badge bg-warning text-dark">{{ nsg.inbound_allow }}</span></td>
+          <td class="text-center">
+            {% if nsg.open_inbound > 0 %}
+            <span class="badge bg-danger">{{ nsg.open_inbound }} <i class="bi bi-exclamation-triangle"></i></span>
+            {% else %}
+            <span class="badge bg-success">0</span>
+            {% endif %}
+          </td>
+          <td><small class="text-muted">{{ (nsg.synced_at or '')[:16].replace('T',' ') }}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="no-data-banner">
+  <i class="bi bi-shield-lock"></i>
+  {% if rg_filter %}
+  No NSGs in resource group "{{ rg_filter }}". <a href="{{ url_for('nsgs_view') }}">Clear filter</a>
+  {% else %}
+  No NSGs found. Run a sync first.
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

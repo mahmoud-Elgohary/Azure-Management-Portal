@@ -3,14 +3,53 @@
 {% block page_title %}Resource Health{% endblock %}
 
 {% block content %}
-<h5 class="mb-3">Resource Health</h5>
+
+<!-- KPI cards -->
+<div class="row g-3 mb-3">
+  {% set total_items = summary.values() | sum %}
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-primary">{{ total_items }}</div>
+      <div class="kpi-label">Total Resources</div>
+      <div class="kpi-sub">monitored by Health API</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <a href="{{ url_for('health_view', state='Available') }}" class="kpi-link">
+      <div class="card kpi-card {% if selected_state == 'Available' %}border-success{% endif %}">
+        <div class="kpi-value text-success">{{ summary.get('Available', 0) }}</div>
+        <div class="kpi-label"><i class="bi bi-check-circle me-1"></i>Available</div>
+        <div class="kpi-sub">Healthy resources</div>
+      </div>
+    </a>
+  </div>
+  <div class="col-6 col-lg-3">
+    <a href="{{ url_for('health_view', state='Degraded') }}" class="kpi-link">
+      <div class="card kpi-card {% if selected_state == 'Degraded' %}border-warning{% endif %}">
+        <div class="kpi-value {% if summary.get('Degraded', 0) %}text-warning{% else %}text-muted{% endif %}">{{ summary.get('Degraded', 0) }}</div>
+        <div class="kpi-label"><i class="bi bi-exclamation-triangle me-1"></i>Degraded</div>
+        <div class="kpi-sub">Reduced capacity</div>
+      </div>
+    </a>
+  </div>
+  <div class="col-6 col-lg-3">
+    <a href="{{ url_for('health_view', state='Unavailable') }}" class="kpi-link">
+      <div class="card kpi-card {% if selected_state == 'Unavailable' %}border-danger{% endif %}">
+        <div class="kpi-value {% if summary.get('Unavailable', 0) %}text-danger{% else %}text-muted{% endif %}">{{ summary.get('Unavailable', 0) }}</div>
+        <div class="kpi-label"><i class="bi bi-x-circle me-1"></i>Unavailable</div>
+        <div class="kpi-sub">{% if summary.get('Unavailable', 0) %}Action required{% else %}All clear{% endif %}</div>
+      </div>
+    </a>
+  </div>
+</div>
 
 <!-- State filter -->
-<div class="mb-3">
-  <a href="{{ url_for('health_view') }}" class="btn btn-sm {% if not selected_state %}btn-dark{% else %}btn-outline-dark{% endif %} me-1">All</a>
+<div class="d-flex align-items-center gap-2 mb-3">
+  <a href="{{ url_for('health_view') }}"
+     class="btn btn-sm {% if not selected_state %}btn-dark{% else %}btn-outline-dark{% endif %}">All</a>
   {% for state, cnt in summary.items() %}
     <a href="{{ url_for('health_view', state=state) }}"
-       class="btn btn-sm me-1
+       class="btn btn-sm
          {% if selected_state == state %}
            {% if state == 'Available' %}btn-success
            {% elif state == 'Unavailable' %}btn-danger
@@ -20,37 +59,58 @@
       {{ state }} ({{ cnt }})
     </a>
   {% endfor %}
+  <span class="ms-auto text-muted small">{{ items | length }} resource{% if items | length != 1 %}s{% endif %}</span>
 </div>
 
 {% if items %}
-<div class="table-responsive">
-  <table class="table table-hover table-sm">
-    <thead class="table-dark">
-      <tr><th>Resource</th><th>Location</th><th>State</th><th>Summary</th><th>Reason</th><th>Since</th></tr>
-    </thead>
-    <tbody>
-      {% for item in items %}
-      <tr class="{% if item.availability_state == 'Unavailable' %}table-danger{% elif item.availability_state == 'Degraded' %}table-warning{% endif %}">
-        <td><small>{{ item.resource_id.split('/')[-1] }}</small></td>
-        <td>{{ item.location or '—' }}</td>
-        <td>
-          <span class="badge
-            {% if item.availability_state == 'Available' %}bg-success
-            {% elif item.availability_state == 'Unavailable' %}bg-danger
-            {% elif item.availability_state == 'Degraded' %}bg-warning text-dark
-            {% else %}bg-secondary{% endif %}">
-            {{ item.availability_state or '—' }}
-          </span>
-        </td>
-        <td><small>{{ item.summary or '—' }}</small></td>
-        <td><small>{{ item.reason_type or '—' }}</small></td>
-        <td><small>{{ (item.occured_time or '')[:16].replace('T',' ') }}</small></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover table-sm align-middle mb-0">
+      <thead class="table-dark">
+        <tr>
+          <th>Resource</th>
+          <th>Location</th>
+          <th>State</th>
+          <th>Summary</th>
+          <th>Reason</th>
+          <th>Since</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr class="{% if item.availability_state == 'Unavailable' %}table-danger{% elif item.availability_state == 'Degraded' %}table-warning{% endif %}">
+          <td>
+            <span class="fw-500" style="font-size:.85rem">{{ item.resource_id.split('/')[-1] }}</span>
+            <br><small class="text-muted">{{ '/'.join(item.resource_id.split('/')[4:6]) }}</small>
+          </td>
+          <td><small>{{ item.location or '—' }}</small></td>
+          <td>
+            <span class="badge
+              {% if item.availability_state == 'Available' %}bg-success
+              {% elif item.availability_state == 'Unavailable' %}bg-danger
+              {% elif item.availability_state == 'Degraded' %}bg-warning text-dark
+              {% else %}bg-secondary{% endif %}">
+              {{ item.availability_state or '—' }}
+            </span>
+          </td>
+          <td><small>{{ item.summary or '—' }}</small></td>
+          <td><small class="text-muted">{{ item.reason_type or '—' }}</small></td>
+          <td><small class="text-muted">{{ (item.occured_time or '')[:16].replace('T',' ') }}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 {% else %}
-  <div class="alert alert-success">All resources healthy — or sync not yet run.</div>
+<div class="no-data-banner">
+  <i class="bi bi-heart-pulse"></i>
+  {% if selected_state %}
+    No resources in <strong>{{ selected_state }}</strong> state.
+    <a href="{{ url_for('health_view') }}">Show all</a>
+  {% else %}
+    All resources healthy — or sync not yet run.
+  {% endif %}
+</div>
 {% endif %}
 {% endblock %}

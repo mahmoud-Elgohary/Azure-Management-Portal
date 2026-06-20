@@ -201,23 +201,27 @@ def dashboard():
 @app.route("/vms")
 @login_required
 def vms():
-    rg = request.args.get("rg")
-    tag = request.args.get("tag")
+    rg    = request.args.get("rg")
+    tag   = request.args.get("tag")
+    state = request.args.get("state")
     try:
-        vm_list = queries.get_vms(resource_group=rg, tag_filter=tag)
+        vm_list = queries.get_vms_with_ips(resource_group=rg, tag_filter=tag, power_state=state)
         for vm in vm_list:
             cpu = queries.latest_vm_cpu(vm["vm_id"])
             vm["cpu_pct"] = round(cpu, 1) if cpu is not None else None
             vm["cpu_status"] = queries.cpu_status(cpu)
+        power_summary = queries.vm_power_summary()
     except Exception as exc:
         flash(_rbac_error(exc), "danger")
-        vm_list = []
+        vm_list, power_summary = [], {}
     return render_template(
         "vms.html",
         vms=vm_list,
+        power_summary=power_summary,
         resource_groups=queries.distinct_resource_groups(),
         selected_rg=rg,
         selected_tag=tag,
+        selected_state=state,
         sync=queries.last_sync_info(),
     )
 
@@ -315,18 +319,21 @@ def sql_detail(resource_group, server_name):
 def cost_view():
     sub = request.args.get("sub")
     try:
-        daily = queries.get_cost_daily(subscription_id=sub)
-        mtd = queries.get_mtd_total()
+        daily     = queries.get_cost_daily(subscription_id=sub)
+        mtd       = queries.get_mtd_total()
+        currency  = queries.get_cost_currency()
         from azure_client.cost import detect_anomalies
         anomalies = detect_anomalies(daily)
         cost_recs = queries.get_cost_advisor_recs()
     except Exception as exc:
         flash(_rbac_error(exc), "danger")
-        daily, mtd, anomalies, cost_recs = [], 0, [], []
+        daily, mtd, anomalies, cost_recs, currency = [], 0, [], [], "EUR"
     return render_template(
         "cost.html",
         daily=daily,
         mtd=mtd,
+        currency=currency,
+        budget=config.MONTHLY_BUDGET,
         anomalies=anomalies,
         cost_recs=cost_recs,
         sub=sub,
@@ -354,8 +361,11 @@ def api_cost_by_rg():
 @login_required
 def advisor_view():
     category = request.args.get("category")
+    impact   = request.args.get("impact")
     try:
         recs = queries.get_advisor_recs(category=category)
+        if impact:
+            recs = [r for r in recs if r.get("impact") == impact]
         summary = queries.advisor_category_summary()
     except Exception as exc:
         flash(_rbac_error(exc), "danger")
@@ -365,6 +375,7 @@ def advisor_view():
         recs=recs,
         summary=summary,
         selected_category=category,
+        selected_impact=impact,
         sync=queries.last_sync_info(),
     )
 
@@ -707,6 +718,48 @@ def api_topology():
         return jsonify({"error": str(exc), "nodes": [], "edges": []}), 200
 
 
+# ── NSGs ──────────────────────────────────────────────────────────────────────
+
+@app.route("/nsgs")
+@login_required
+def nsgs_view():
+    rg_filter = request.args.get("rg")
+    try:
+        nsgs = queries.get_nsgs_with_rule_counts()
+        if rg_filter:
+            nsgs = [n for n in nsgs if n["resource_group"] == rg_filter]
+    except Exception as exc:
+        flash(_rbac_error(exc), "danger")
+        nsgs = []
+    return render_template(
+        "nsgs.html",
+        nsgs=nsgs,
+        rg_filter=rg_filter,
+        resource_groups=queries.distinct_resource_groups(),
+        sync=queries.last_sync_info(),
+    )
+
+
+@app.route("/nsgs/<resource_group>/<nsg_name>")
+@login_required
+def nsg_detail(resource_group, nsg_name):
+    try:
+        nsg   = queries.get_nsg_by_name(resource_group, nsg_name)
+        if not nsg:
+            flash(f"NSG '{nsg_name}' not found.", "warning")
+            return redirect(url_for("nsgs_view"))
+        rules = queries.get_nsg_rules(nsg_id=nsg["nsg_id"])
+    except Exception as exc:
+        flash(_rbac_error(exc), "danger")
+        return redirect(url_for("nsgs_view"))
+    return render_template(
+        "nsg_detail.html",
+        nsg=nsg,
+        rules=rules,
+        sync=queries.last_sync_info(),
+    )
+
+
 # ── CMDB ──────────────────────────────────────────────────────────────────────
 
 @app.route("/cmdb")
@@ -765,6 +818,26 @@ def api_search():
         return jsonify({"results": []})
     results = queries.search_resources(q)
     return jsonify({"results": results})
+
+
+# ── Health check ─────────────────────────────────────────────────────────────
+
+@app.route("/healthz")
+def healthz():
+    """Lightweight health check — no auth required."""
+    from models.db import get_db as _get_db
+    try:
+        conn = _get_db()
+        row = conn.execute("SELECT synced_at, status FROM sync_log ORDER BY id DESC LIMIT 1").fetchone()
+        conn.close()
+        return jsonify({
+            "status": "ok",
+            "db": "ok",
+            "last_sync": row["synced_at"] if row else None,
+            "sync_status": row["status"] if row else "never",
+        })
+    except Exception as exc:
+        return jsonify({"status": "error", "detail": str(exc)}), 500
 
 
 # ── Sync Now ──────────────────────────────────────────────────────────────────
