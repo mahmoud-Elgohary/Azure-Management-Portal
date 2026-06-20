@@ -4,6 +4,8 @@ import json
 import re
 import secrets
 import threading
+import time
+import logging
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
@@ -18,11 +20,36 @@ from models.db import init_db
 from models import queries
 from auth.sso import get_auth_url, get_token_from_code, login_required, check_group
 
+log = logging.getLogger("wts.app")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
+
 app = Flask(__name__)
 app.secret_key = config.FLASK_SECRET_KEY
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
+# ── Session lifetime ──────────────────────────────────────────────────────────
+from datetime import timedelta
+app.permanent_session_lifetime = timedelta(minutes=config.SESSION_TIMEOUT_MINUTES)
+
+# ── Sync rate-limit state ─────────────────────────────────────────────────────
+_last_sync_time: float = 0.0
+_sync_lock = threading.Lock()
+
 QUERIES_FILE = os.path.join(os.path.dirname(__file__), "queries.json")
+
+
+# ── Session & request hooks ───────────────────────────────────────────────────
+
+@app.before_request
+def _renew_session():
+    """Mark session as permanent so Flask applies the lifetime, and refresh activity."""
+    if session.get("user"):
+        session.permanent = True
+        session.modified = True
 
 
 # ── CSRF helpers ──────────────────────────────────────────────────────────────
@@ -301,6 +328,20 @@ def cost_view():
     )
 
 
+# ── Cost API ─────────────────────────────────────────────────────────────────
+
+@app.route("/api/cost/trend")
+@login_required
+def api_cost_trend():
+    return jsonify(queries.get_cost_trend_by_date())
+
+
+@app.route("/api/cost/by-rg")
+@login_required
+def api_cost_by_rg():
+    return jsonify(queries.get_cost_by_resource_group_mtd())
+
+
 # ── Advisor ───────────────────────────────────────────────────────────────────
 
 @app.route("/advisor")
@@ -368,13 +409,21 @@ def backup_view():
 @login_required
 def kql_console():
     blitz = _load_queries()
-    workspace_id = getattr(config, "LOG_ANALYTICS_WORKSPACE_ID", "")
+    workspaces = getattr(config, "LOG_ANALYTICS_WORKSPACES", [])
+    workspace_id = workspaces[0]["id"] if workspaces else getattr(config, "LOG_ANALYTICS_WORKSPACE_ID", "")
     return render_template(
         "kql.html",
         blitz=blitz,
         workspace_id=workspace_id,
+        workspaces=workspaces,
         sync=queries.last_sync_info(),
     )
+
+
+@app.route("/api/kql/workspaces", methods=["GET"])
+@login_required
+def api_kql_workspaces():
+    return jsonify(config.LOG_ANALYTICS_WORKSPACES)
 
 
 @app.route("/api/kql/run", methods=["POST"])
@@ -385,7 +434,7 @@ def api_kql_run():
 
     body = request.get_json(silent=True) or {}
     kql  = (body.get("query") or "").strip()
-    workspace_id = getattr(config, "LOG_ANALYTICS_WORKSPACE_ID", "")
+    workspace_id = (body.get("workspace_id") or "").strip() or getattr(config, "LOG_ANALYTICS_WORKSPACE_ID", "")
 
     if not kql:
         return jsonify({"error": "Query is empty"}), 400
@@ -395,9 +444,23 @@ def api_kql_run():
     try:
         from azure_client.logs import run_kql
         result = run_kql(workspace_id, kql, timeout_seconds=30, max_rows=1000)
+        queries.save_kql_history(
+            query=kql,
+            workspace_id=workspace_id,
+            row_count=result.get("row_count", 0),
+            elapsed_ms=result.get("elapsed_ms", 0),
+            had_error="error" in result,
+        )
         return jsonify(result)
     except Exception as exc:
+        queries.save_kql_history(kql, workspace_id, 0, 0, True)
         return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/kql/history", methods=["GET"])
+@login_required
+def api_kql_history():
+    return jsonify(queries.get_kql_history())
 
 
 @app.route("/api/kql/queries", methods=["GET"])
@@ -472,6 +535,57 @@ def alerts_view():
     )
 
 
+# ── PostgreSQL ────────────────────────────────────────────────────────────────
+
+@app.route("/postgresql")
+@login_required
+def postgresql_view():
+    rg = request.args.get("rg")
+    try:
+        servers = queries.get_postgresql_servers(resource_group=rg)
+    except Exception as exc:
+        flash(_rbac_error(exc), "danger")
+        servers = []
+    return render_template(
+        "postgresql.html",
+        servers=servers,
+        resource_groups=queries.distinct_resource_groups(),
+        selected_rg=rg,
+        sync=queries.last_sync_info(),
+    )
+
+
+# ── Security ──────────────────────────────────────────────────────────────────
+
+@app.route("/security")
+@login_required
+def security_view():
+    try:
+        summary = queries.get_security_summary()
+        open_ports = queries.get_open_nsg_ports()
+        public_ips_exposed = [
+            r for r in queries.get_advisor_recs(category="Security")
+        ]
+        nsg_rules = queries.get_nsg_rules()
+    except Exception as exc:
+        flash(_rbac_error(exc), "danger")
+        summary, open_ports, public_ips_exposed, nsg_rules = {}, [], [], []
+    return render_template(
+        "security.html",
+        summary=summary,
+        open_ports=open_ports,
+        advisor_security=public_ips_exposed,
+        nsg_rules=nsg_rules,
+        sync=queries.last_sync_info(),
+    )
+
+
+@app.route("/api/security/summary")
+@login_required
+def api_security_summary():
+    return jsonify(queries.get_security_summary())
+
+
 # ── Topology ──────────────────────────────────────────────────────────────────
 
 @app.route("/topology")
@@ -507,9 +621,19 @@ def api_search():
 @app.route("/sync", methods=["POST"])
 @login_required
 def trigger_sync():
+    global _last_sync_time
     if not _check_csrf():
         flash("CSRF check failed — please try again.", "danger")
         return redirect(request.referrer or url_for("dashboard"))
+
+    min_interval_secs = config.MIN_SYNC_INTERVAL_MINUTES * 60
+    with _sync_lock:
+        elapsed = time.time() - _last_sync_time
+        if elapsed < min_interval_secs:
+            wait = int((min_interval_secs - elapsed) / 60) + 1
+            flash(f"Sync throttled — please wait {wait} min before triggering again.", "warning")
+            return redirect(request.referrer or url_for("dashboard"))
+        _last_sync_time = time.time()
 
     def _run():
         from sync.sync_job import run_sync

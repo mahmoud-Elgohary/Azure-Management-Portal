@@ -168,8 +168,11 @@ def get_cost_daily(subscription_id: str = None) -> list[dict]:
 
 
 def get_mtd_total() -> float:
+    month_start = datetime.now(timezone.utc).strftime("%Y-%m-01")
     conn = get_db()
-    row = conn.execute("SELECT SUM(cost) AS total FROM cost_daily").fetchone()
+    row = conn.execute(
+        "SELECT SUM(cost) AS total FROM cost_daily WHERE date >= ?", (month_start,)
+    ).fetchone()
     conn.close()
     return round(row["total"] or 0, 2)
 
@@ -239,12 +242,14 @@ def get_backup_for_vm(vm_name: str) -> dict | None:
 def backup_problem_count() -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=config.BACKUP_STALE_HOURS)).isoformat()
     conn = get_db()
-    row = conn.execute(
-        "SELECT COUNT(*) AS cnt FROM backup_status WHERE last_backup_status != 'Completed' OR last_backup_time < ? OR last_backup_time IS NULL",
-        (cutoff,),
-    ).fetchone()
-    conn.close()
-    return row["cnt"]
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM backup_status WHERE last_backup_status != 'Completed' OR last_backup_time < ? OR last_backup_time IS NULL",
+            (cutoff,),
+        ).fetchone()
+        return row["cnt"]
+    finally:
+        conn.close()
 
 
 # ── Resource Health ───────────────────────────────────────────────────────────
@@ -352,7 +357,9 @@ def get_topology_graph() -> dict:
         })
 
     # SQL servers
-    for srv in conn.execute("SELECT server_id, name, resource_group, location FROM sql_servers").fetchall():
+    for srv in conn.execute(
+        "SELECT server_id, name, resource_group, location FROM sql_servers"
+    ).fetchall():
         nodes.append({
             "data": {
                 "id": srv["server_id"],
@@ -362,6 +369,23 @@ def get_topology_graph() -> dict:
                 "url": f"/sql/{srv['resource_group']}/{srv['name']}",
             }
         })
+
+    # PostgreSQL servers
+    if _table_exists("postgresql_servers"):
+        try:
+            for pg in conn.execute(
+                "SELECT server_id, name, resource_group, location FROM postgresql_servers"
+            ).fetchall():
+                nodes.append({
+                    "data": {
+                        "id": pg["server_id"],
+                        "label": pg["name"],
+                        "type": "postgresql",
+                        "rg": pg["resource_group"],
+                    }
+                })
+        except Exception:
+            pass
 
     # VNets
     if _table_exists("vnets"):
@@ -419,7 +443,7 @@ def get_topology_graph() -> dict:
             if pip["nic_id"]:
                 edges.append({"data": {"id": f"e-pip-{pip['pip_id']}", "source": pip["pip_id"], "target": pip["nic_id"], "type": "api", "label": "public IP"}})
 
-    # NSGs — edges: NSG→Subnet
+    # NSGs — nodes + edges to subnets (via subnets.nsg_id)
     if _table_exists("nsgs"):
         for nsg in conn.execute("SELECT nsg_id, name, resource_group FROM nsgs").fetchall():
             nodes.append({
@@ -430,6 +454,20 @@ def get_topology_graph() -> dict:
                     "rg": nsg["resource_group"],
                 }
             })
+        # Wire NSG→Subnet edges using the subnets.nsg_id foreign key
+        if _table_exists("subnets"):
+            for sn in conn.execute(
+                "SELECT subnet_id, nsg_id FROM subnets WHERE nsg_id IS NOT NULL AND nsg_id != ''"
+            ).fetchall():
+                edges.append({
+                    "data": {
+                        "id": f"e-nsg-sn-{sn['subnet_id']}",
+                        "source": sn["nsg_id"],
+                        "target": sn["subnet_id"],
+                        "type": "api",
+                        "label": "protects",
+                    }
+                })
 
     # VNet peerings
     if _table_exists("vnet_peerings"):
@@ -517,3 +555,155 @@ def distinct_resource_groups() -> list[str]:
         rgs.update(r["resource_group"] for r in rows if r["resource_group"])
     conn.close()
     return sorted(rgs)
+
+
+# ── Cost trend / charts ───────────────────────────────────────────────────────
+
+def get_cost_trend_by_date() -> list[dict]:
+    """Daily total cost across all resource groups — for trend charts."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT date, SUM(cost) AS total, currency FROM cost_daily "
+        "GROUP BY date ORDER BY date"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_cost_by_resource_group_mtd() -> list[dict]:
+    """MTD cost per resource group, current month only."""
+    month_start = datetime.now(timezone.utc).strftime("%Y-%m-01")
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT resource_group, SUM(cost) AS total, currency "
+        "FROM cost_daily WHERE date >= ? "
+        "GROUP BY resource_group ORDER BY total DESC",
+        (month_start,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_all_time_total() -> float:
+    """Total cost across all synced history (for reference)."""
+    conn = get_db()
+    row = conn.execute("SELECT SUM(cost) AS total FROM cost_daily").fetchone()
+    conn.close()
+    return round(row["total"] or 0, 2)
+
+
+# ── NSG rules ─────────────────────────────────────────────────────────────────
+
+def get_nsg_rules(nsg_id: str = None, direction: str = None) -> list[dict]:
+    conn = get_db()
+    sql = "SELECT * FROM nsg_rules WHERE 1=1"
+    params = []
+    if nsg_id:
+        sql += " AND nsg_id = ?"
+        params.append(nsg_id)
+    if direction:
+        sql += " AND direction = ?"
+        params.append(direction)
+    sql += " ORDER BY nsg_name, direction, priority"
+    try:
+        rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    return rows
+
+
+def get_open_nsg_ports() -> list[dict]:
+    """Return NSG rules that allow inbound from Any/Internet on non-standard ports."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT * FROM nsg_rules
+               WHERE direction='Inbound' AND access='Allow'
+                 AND (source_prefix IN ('*','Any','Internet','0.0.0.0/0'))
+               ORDER BY priority""",
+        ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+# ── PostgreSQL ────────────────────────────────────────────────────────────────
+
+def get_postgresql_servers(resource_group: str = None) -> list[dict]:
+    conn = get_db()
+    sql = "SELECT * FROM postgresql_servers WHERE 1=1"
+    params = []
+    if resource_group:
+        sql += " AND resource_group = ?"
+        params.append(resource_group)
+    sql += " ORDER BY name"
+    try:
+        rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    return rows
+
+
+# ── KQL history ───────────────────────────────────────────────────────────────
+
+def save_kql_history(query: str, workspace_id: str, row_count: int, elapsed_ms: int, had_error: bool):
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO kql_history (query, workspace_id, executed_at, row_count, elapsed_ms, had_error) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (query, workspace_id, datetime.now(timezone.utc).isoformat(), row_count, elapsed_ms, 1 if had_error else 0),
+        )
+        conn.execute("DELETE FROM kql_history WHERE id NOT IN (SELECT id FROM kql_history ORDER BY id DESC LIMIT 100)")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_kql_history(limit: int = 20) -> list[dict]:
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT id, query, workspace_id, executed_at, row_count, elapsed_ms, had_error "
+            "FROM kql_history ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+# ── Security summary ──────────────────────────────────────────────────────────
+
+def get_security_summary() -> dict:
+    """Quick-read security posture numbers for the security dashboard."""
+    open_ports = get_open_nsg_ports()
+    public_ips = []
+    conn = get_db()
+    try:
+        pip_rows = conn.execute("SELECT COUNT(*) AS cnt FROM public_ips WHERE ip_address IS NOT NULL").fetchone()
+        pip_count = pip_rows["cnt"] if pip_rows else 0
+        advisor_sec = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM advisor_recs WHERE category='Security'"
+        ).fetchone()
+        sec_recs = advisor_sec["cnt"] if advisor_sec else 0
+        unavailable = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM resource_health WHERE availability_state='Unavailable'"
+        ).fetchone()
+        unavail_count = unavailable["cnt"] if unavailable else 0
+    finally:
+        conn.close()
+    return {
+        "open_inbound_rules": len(open_ports),
+        "public_ip_count": pip_count,
+        "security_advisor_recs": sec_recs,
+        "unavailable_resources": unavail_count,
+    }

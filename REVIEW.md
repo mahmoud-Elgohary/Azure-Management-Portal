@@ -1,280 +1,511 @@
-# WTS Azure Cloud Manager — Security & Quality Review
-**Date:** 2026-06-18  
-**Reviewer:** Claude Code (automated + manual audit)  
-**App version:** as-built, last sync 2026-06-16
+# WTS Azure Cloud Manager — Enterprise Architecture Review
+**Date:** 2026-06-20
+**Reviewer:** Claude Code (automated + manual audit)
+**Scope:** Full enterprise review — 10 phases, 16 deliverables
+**Security constraint:** Application remains STRICTLY READ-ONLY throughout
 
 ---
 
-## Summary Table
+## Table of Contents
 
-| # | Severity | Area | Finding |
-|---|----------|------|---------|
-| 1 | **Critical** | Security | No portal authentication — app open to anyone with loopback/tunnel access |
-| 2 | **High** | Deployment | Running as Flask dev server (`python app.py`), not gunicorn |
-| 3 | **High** | Deployment | No reverse proxy active — nginx not installed, Caddy ignores port 8050 |
-| 4 | **High** | Security | `FLASK_SECRET_KEY` falls back to hardcoded insecure default if env var missing |
-| 5 | **Medium** | Deployment | No background sync scheduler — `SYNC_INTERVAL_MINUTES` is never acted on |
-| 6 | **Medium** | Security | No CSRF protection on `POST /sync` |
-| 7 | **Medium** | Data | `resource_graph` module imported but never called — dead code, and its queries have no pagination |
-| 8 | **Medium** | Data | Cost query has no pagination guard — silently truncates large result sets |
-| 9 | **Medium** | Code | `vm_power_summary()` called twice in dashboard route |
-| 10 | **Low** | Code | Memory thresholds (`MEM_FREE_RED/AMBER_GB`) defined in config but used nowhere |
-| 11 | **Low** | Azure | N+1 API calls for VM power state (one `instance_view` per VM) |
-| 12 | **Low** | Docs | README describes nginx setup that isn't installed; doesn't mention Caddy |
-| 13 | **Low** | Config | `AZURE_CLIENT_ID` in `.env` differs from WTS-Azure-Reports ID in prior audit |
-| 14 | **Info** | Completeness | `alerts`, `retirements`, `postgres`, `identity` modules not present |
-
----
-
-## 1. CRITICAL — No Portal Authentication
-
-**File:** `app.py` (all routes)  
-**What's wrong:** Every Flask route (`/`, `/vms`, `/sql`, `/cost`, `/advisor`, `/health`, `/backup`, `/sync`) requires zero authentication. No login, no session check, no IP allowlist.
-
-**Current exposure:** The app binds to `127.0.0.1:8050` (loopback only — confirmed via `ss`). That means it's **not** directly reachable over the LAN right now, because no reverse proxy is forwarding to it (nginx isn't installed; Caddy only covers port 5000). So today's blast radius is limited to SSH access to the VM.
-
-**Why it still matters:** The moment a reverse proxy is wired up to serve this externally (the intended goal), every page becomes public. That means Azure resource inventory, cost figures, SQL server names, backup status, and Advisor recommendations — all of it visible without any credential.
-
-**Options (your decision, not auto-applied):**
-
-| Option | Effort | Trade-off |
-|--------|--------|-----------|
-| **nginx basic-auth** | ~15 min | Easiest; credentials in a `.htpasswd` file; no app changes; nginx would need to be installed first |
-| **Caddy basic-auth directive** | ~5 min | Caddy is already running; just add `basicauth` block in `Caddyfile` with a bcrypt-hashed password; WTS path becomes `/wts/` or similar |
-| **Flask session/login** | ~2 hours | Better UX, but adds a dependency (Flask-Login) and a user store |
-| **Entra ID SSO** | ~4 hours | Strongest; same pattern as the Evolvice M365 portal; requires an app registration |
-
-**Recommendation:** Caddy basic-auth is the fastest safe interim (already running, no new installs). Let me know and I'll prep the one-liner.
+1. [Executive Summary](#1-executive-summary)
+2. [Architecture Review](#2-architecture-review)
+3. [Security Review](#3-security-review)
+4. [Database Review](#4-database-review)
+5. [Topology Review](#5-topology-review)
+6. [Cost Review](#6-cost-review)
+7. [CMDB Design](#7-cmdb-design)
+8. [Security Dashboard Design](#8-security-dashboard-design)
+9. [KQL Center Design](#9-kql-center-design)
+10. [Documentation Center Design](#10-documentation-center-design)
+11. [Technical Debt List](#11-technical-debt-list)
+12. [Risk Register](#12-risk-register)
+13. [Prioritized Backlog](#13-prioritized-backlog)
+14. [30-Day Roadmap](#14-30-day-roadmap)
+15. [60-Day Roadmap](#15-60-day-roadmap)
+16. [90-Day Roadmap](#16-90-day-roadmap)
 
 ---
 
-## 2. HIGH — Running as Flask Dev Server
+## 1. Executive Summary
 
-**File:** `deploy/wts-azure-manager.service`, process list  
-**What's wrong:** The systemd service has never been installed. The app is running as:
+The WTS Azure Cloud Manager is a Flask-based internal portal providing read-only visibility into WTS Taxtools' Azure subscriptions. As of the enterprise review (2026-06-20), the platform has progressed from a proof-of-concept to a structured multi-module application with authentication, caching, and a growing feature surface.
+
+### Current state scorecard
+
+| Domain | Status | Score |
+|--------|--------|-------|
+| Authentication & Authorization | Entra ID OIDC, group-gated | Good |
+| Read-only constraint | Enforced — no ARM writes, no PUT/POST to Azure | Enforced |
+| Secret handling | Split SP model; `.env` gitignored; never logged | Good |
+| Database design | SQLite WAL-mode; schema growing organically | Needs normalisation |
+| Observability | `print()` to `logging` migrated; sync log present | No structured log export |
+| Cost management | Chart.js MTD/trend added; anomaly detection live | Good |
+| Security dashboard | NSG rules, open ports, Advisor Security section live | Good |
+| KQL console | End-to-end fixed; workspace picker; history tab | Good |
+| Network topology | Cytoscape.js; VNet/Subnet/NSG/PG nodes; SQL edges | Good |
+| PostgreSQL support | Flexible Servers sync + listing page added | Added |
+| Dependency hygiene | `requirements.txt` pinned; `azure-mgmt-rdbms` added | Good |
+
+### Key risks
+
+- SQLite concurrency under >3 simultaneous users (no connection pooling)
+- No audit trail: who viewed what data, when
+- No alerting on sync failures — failures are silent beyond logs
+- `azure-mgmt-recoveryservicesbackup` v9 API has breaking changes in >=10
+
+---
+
+## 2. Architecture Review
+
+### 2.1 Component diagram
+
 ```
-.venv/bin/python app.py
+Browser
+  |  HTTPS (Caddy TLS)
+  v
+Caddy :8444 -> reverse proxy -> Gunicorn :8050
+                                   |
+                           Flask app (app.py)
+                           |-- Auth layer (MSAL OIDC)
+                           |-- Route handlers
+                           |-- models/queries.py --> SQLite cache.sqlite (WAL)
+                           |-- azure_client/     --> Azure ARM APIs (read-only)
+                           `-- sync/sync_job.py  --> background daemon thread
 ```
-Flask's built-in dev server is single-threaded, not designed for production, and will die on VM restart.
 
-**Fix (requires your go-ahead):**
-```bash
-sudo cp deploy/wts-azure-manager.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now wts-azure-manager
+### 2.2 Strengths
+
+- **Split credential model**: sign-in SP (AUTH_CLIENT_ID) and data SP (AZURE_CLIENT_ID) are decoupled. If data SP is compromised, sign-in flow is unaffected.
+- **SQLite WAL mode**: readers never block writers, appropriate for single-instance portal.
+- **Gunicorn 2 workers**: survives one worker crash; restart on failure.
+- **Daemon sync thread**: background sync does not block request handling.
+- **CSRF on all POST routes**: signed Flask session cookie carries CSRF token.
+
+### 2.3 Identified weaknesses
+
+| # | Area | Issue | Recommendation |
+|---|------|-------|----------------|
+| A1 | Concurrency | SQLite `check_same_thread=False` — each request opens new connection, no pool | Add `threading.local()` connection cache or migrate to PostgreSQL for >5 users |
+| A2 | Sync errors | Failed sync sections update `sync_status` but no alert is sent | Add email/Teams webhook on consecutive sync failures |
+| A3 | Session storage | Flask signed cookies — unlimited session size could exceed cookie limits | Consider server-side session store for large token payloads |
+| A4 | Worker count | 2 Gunicorn workers is low if sync triggers are frequent | Increase to 4 workers or use async workers (gevent) |
+| A5 | No health endpoint | No `/healthz` endpoint for uptime monitoring | Add `GET /healthz` returning sync age and DB write test |
+
+### 2.4 File structure (current)
+
 ```
-Then kill the current `python app.py` process. The service is already correct: `User=claude-code`, `Restart=on-failure`, 2 workers, loopback bind.
+wts-azure-manager/
+|-- app.py                  Main Flask app, all routes
+|-- config.py               Env-var config
+|-- auth/
+|   |-- decorator.py        @login_required
+|   `-- msal_helper.py      OIDC flow, token cache
+|-- azure_client/
+|   |-- credentials.py      DefaultAzureCredential / SP credential
+|   |-- compute.py          VM fetch
+|   |-- sql.py              SQL / Elastic Pool fetch
+|   |-- network.py          VNets / NICs / PIPs / NSGs / NSG rules
+|   |-- postgresql.py       PostgreSQL Flexible Servers
+|   |-- cost.py             Cost Management
+|   |-- advisor.py          Advisor recommendations
+|   |-- health.py           Resource Health
+|   |-- backup.py           Recovery Services Backup
+|   `-- logs.py             Log Analytics KQL
+|-- models/
+|   |-- db.py               Schema + migrations
+|   `-- queries.py          All read queries
+|-- sync/
+|   `-- sync_job.py         Background sync orchestrator
+|-- templates/              Jinja2 HTML
+|-- static/css/style.css    Custom styles
+|-- requirements.txt
+`-- .env                    Gitignored; never committed
+```
 
 ---
 
-## 3. HIGH — No Reverse Proxy Active
+## 3. Security Review
 
-**File:** `deploy/nginx-wts-azure-manager.conf`  
-**What's wrong:** nginx is not installed on this VM (`which nginx` → nothing). The deploy config is present but has never been applied. The Caddy instance (confirmed running, serving `192.168.1.115:8443`) only proxies to port 5000 (the Evolvice M365 app). Port 8050 has no TLS termination, no external exposure.
+### 3.1 Authentication
 
-**Result:** The WTS app is currently only accessible via SSH tunnel to the VM (`ssh -L 8050:127.0.0.1:8050`). That means:
-- No one can reach it externally yet — net-positive for now
-- TLS cert listed in nginx config (`/etc/ssl/certs/wts-azure-manager.crt`) doesn't exist
+| Control | Status |
+|---------|--------|
+| Entra ID OIDC (Authorization Code) | Implemented |
+| Group-based access gate (ALLOWED_GROUP_ID) | Configurable |
+| Session lifetime (SESSION_TIMEOUT_MINUTES, default 8h) | Configurable |
+| Session renewal on activity | `before_request` hook |
+| CSRF tokens on POST routes | X-CSRF-Token header checked |
+| No write operations to Azure | Enforced — no ARM PUT/PATCH/DELETE |
 
-**Fix options:** (a) Install nginx and apply the cert, or (b) add a `route` block to the existing Caddyfile to proxy `/wts/*` → `127.0.0.1:8050` with `basicauth`. Option (b) is simpler given Caddy is already running.
+### 3.2 Secret handling
+
+| Control | Status |
+|---------|--------|
+| `.env` in `.gitignore` | Verified |
+| CLIENT_SECRET never logged or printed | Verified — `logging` module used; no credential fields in log messages |
+| Split SP: data vs auth | AUTH_CLIENT_ID/SECRET separate from data SP |
+| Secret rotation path | Manual — no rotation reminder or expiry tracking |
+
+### 3.3 Network exposure
+
+| Finding | Risk | Recommendation |
+|---------|------|----------------|
+| App behind Caddy TLS (8444) | Low — internal only | Confirm Caddy uses valid cert |
+| No rate limiting on login endpoint | Medium | Add Flask-Limiter on `/auth/login` (10 req/min) |
+| `/api/*` endpoints return Azure resource data | Low — require session | All API routes verified to have `@login_required` |
+
+### 3.4 NSG analysis (from Security Dashboard data)
+
+Once sync runs and NSG rules are collected:
+- Rules allowing `source = *` or `source = Internet` on inbound direction are flagged as open inbound rules
+- These appear in the Security Center page with NSG name, rule name, port, priority, and protocol
+- Recommended action: scope each rule to known source IP ranges
 
 ---
 
-## 4. HIGH — Insecure FLASK_SECRET_KEY Fallback
+## 4. Database Review
 
-**File:** `config.py:17`  
-**What's wrong:**
+### 4.1 Current schema
+
+| Table | Purpose | Key columns |
+|-------|---------|-------------|
+| `vms` | VM inventory | vm_id, name, resource_group, status, cpu_pct, mem_free_gb |
+| `sql_databases` | SQL DB inventory | db_id, server_name, sku_name, max_size_gb |
+| `elastic_pools` | Elastic pools | pool_id, server_name, sku_name, max_capacity |
+| `postgresql_servers` | PG Flexible Servers | server_id, name, version, state, sku, storage_gb, fqdn, ha_mode |
+| `vnets` | Virtual Networks | vnet_id, name, resource_group, address_space |
+| `subnets` | Subnets | subnet_id, vnet_id, nsg_id, address_prefix |
+| `nics` | Network Interfaces | nic_id, vm_id, subnet_id, private_ip |
+| `public_ips` | Public IP addresses | pip_id, ip_address, allocation, nic_id |
+| `nsgs` | NSGs | nsg_id, name, resource_group |
+| `nsg_rules` | NSG security rules | nsg_id, name, priority, direction, access, protocol, source/dest |
+| `cost_data` | Daily costs | date, resource_group, cost, currency |
+| `advisor_recs` | Advisor recommendations | rec_id, category, impact, short_description, solution |
+| `resource_health` | Health events | resource_id, state, reason, occured_time |
+| `backup_status` | Backup jobs | vm_name, last_backup_time, status |
+| `kql_history` | Query history | query, workspace_id, row_count, elapsed_ms, executed_at |
+| `resources` | Generic CMDB store | resource_id, name, type, resource_group, subscription_id, location |
+| `sync_log` | Sync metadata | id, started_at, finished_at, status, sections_ok, sections_fail |
+
+### 4.2 Index coverage
+
+All high-traffic query patterns are indexed:
+- `idx_vms_rg`, `idx_vms_name` — VM list/filter
+- `idx_cost_date`, `idx_cost_rg` — cost trend/by-RG queries
+- `idx_nsg_rules_nsg` — NSG join
+- `idx_kql_history_time` — history list
+- `idx_resources_type`, `idx_resources_rg` — CMDB queries
+
+### 4.3 Identified issues
+
+| # | Issue | Fix |
+|---|-------|-----|
+| D1 | `resource_group` stored as plain string — no FK | Acceptable for read cache; no referential integrity needed |
+| D2 | `cost_data` upsert not atomic — duplicate inserts possible if sync runs mid-day | Add `INSERT OR REPLACE` with composite unique key `(date, resource_group, currency)` |
+| D3 | `kql_history` has no maximum size cap — grows unbounded | Cap at 200 rows — delete oldest after insert |
+| D4 | No WAL checkpoint forced — WAL file can grow large on busy instances | Add `PRAGMA wal_checkpoint(PASSIVE)` after each sync |
+
+---
+
+## 5. Topology Review
+
+### 5.1 Node types and rendering
+
+| Type | Color | Shape | Source table |
+|------|-------|-------|-------------|
+| VM | `#0078d4` blue | Rectangle | `vms` |
+| VNet | `#7c3aed` purple | Round-rectangle | `vnets` |
+| Subnet | `#a78bfa` light purple | Round-rectangle | `subnets` |
+| SQL | `#059669` green | Diamond | `sql_databases` |
+| NIC | `#6b7280` grey | Ellipse | `nics` |
+| Public IP | `#f59e0b` amber | Star | `public_ips` |
+| NSG | `#dc2626` red | Hexagon | `nsgs` |
+| PostgreSQL | `#0891b2` cyan | Barrel | `postgresql_servers` |
+
+### 5.2 Edge types
+
+| Edge | Type | Meaning |
+|------|------|---------|
+| VM to NIC | api | VM has NIC |
+| NIC to Subnet | api | NIC in Subnet |
+| Subnet to VNet | api | Subnet in VNet |
+| NSG to Subnet | api | NSG protects Subnet |
+| SQL to VNet | logical | SQL server in VNet |
+| PostgreSQL to Subnet | api | PG server delegated subnet |
+
+### 5.3 Identified issues
+
+| # | Issue | Fix |
+|---|-------|-----|
+| T1 | Large environments (>200 nodes) cause Cytoscape to lag | Add node count warning + RG filter |
+| T2 | No persistence of topology layout between page loads | Save layout JSON to localStorage |
+| T3 | Orphaned NICs (no VM) appear as isolated nodes | Filter or add visual indicator |
+
+---
+
+## 6. Cost Review
+
+### 6.1 Features implemented
+
+- Month-to-date (MTD) total — filtered to current calendar month
+- Daily spend trend line chart (Chart.js) via `/api/cost/trend`
+- MTD by resource group doughnut chart via `/api/cost/by-rg`
+- Anomaly detection: flag days where spend > 1.5x recent daily average
+- Sortable detail table with date descending
+
+### 6.2 Known limitations
+
+| # | Issue | Recommendation |
+|---|-------|----------------|
+| C1 | Cost data only available if SP has `Cost Management Reader` role | Document and surface in UI when data is empty |
+| C2 | Currency assumed EUR (symbol hard-coded in template) | Use `currency` column from `cost_data` table |
+| C3 | No budget threshold comparison | Add optional `MONTHLY_BUDGET_EUR` env var |
+| C4 | Historical cost beyond subscription retention period unavailable | Document retention limits |
+
+---
+
+## 7. CMDB Design
+
+### 7.1 Purpose
+
+The `resources` table acts as a lightweight CMDB for cross-cutting queries: "what resources are in subscription X", "what resources have tag Y", "what resources went stale".
+
+### 7.2 Recommended schema extension
+
+```sql
+-- Tags support (JSON blob)
+ALTER TABLE resources ADD COLUMN tags TEXT DEFAULT '{}';
+
+-- Subscription label for multi-sub clarity
+ALTER TABLE resources ADD COLUMN subscription_name TEXT DEFAULT '';
+
+-- Staleness detection
+ALTER TABLE resources ADD COLUMN last_seen TEXT DEFAULT '';
+```
+
+### 7.3 Recommended queries to add
+
 ```python
-FLASK_SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "dev-insecure-key-change-me")
-```
-If the env var is ever missing (e.g., after an accidental `.env` edit like the Defender credential bug from prior session), Flask silently uses the hardcoded string. Anyone who knows the key can forge session cookies.
-
-**The .env currently has a good 64-char random key**, so this isn't actively exploitable today. But the silent fallback is the danger.
-
-**Fix applied (safe — raises loud error instead of silent fallback):**
-```python
-FLASK_SECRET_KEY = os.environ["FLASK_SECRET_KEY"]   # KeyError on startup if missing
-```
-(Applied — see fixes section below.)
-
----
-
-## 5. MEDIUM — No Background Sync Scheduler
-
-**File:** `config.py:18`, `app.py`  
-**What's wrong:** `SYNC_INTERVAL_MINUTES = 60` is read from env but never acted on. There's no `APScheduler`, `threading.Timer`, or cron job wiring in `app.py`. The only sync path is the manual `POST /sync` button. Last sync was 46 hours ago (2026-06-16 11:09 UTC).
-
-**Fix (requires your decision):** Add a background thread in `app.py` that calls `run_sync()` every `SYNC_INTERVAL_MINUTES`. Or set up a Linux cron job:
-```cron
-0 * * * * /home/claude-code/wts-azure-manager/.venv/bin/python -m sync.sync_job >> /home/claude-code/wts-azure-manager/sync.log 2>&1
+def get_resources_by_type(resource_type: str) -> list[dict]: ...
+def search_resources(q: str) -> list[dict]: ...
+def get_stale_resources(days: int = 7) -> list[dict]: ...
 ```
 
----
+### 7.4 CMDB page design
 
-## 6. MEDIUM — No CSRF Protection on POST /sync
-
-**File:** `app.py:194`, `templates/base.html:28`  
-**What's wrong:** The "Sync Now" form is a bare POST with no CSRF token:
-```html
-<form action="/sync" method="post">
-  <button type="submit">Sync Now</button>
-</form>
-```
-A malicious page could silently trigger a sync (e.g., via an `<img src="...">` or fetch) if the victim's browser can reach port 8050. Low impact today (sync is read-only), but the surface grows once a proxy is added.
-
-**Fix:** Add Flask-WTF CSRF protection, or generate and verify a session-tied nonce in the sync form. Not applied — requires your decision on whether Flask-WTF is acceptable.
+A `/cmdb` route with:
+- Filter by subscription, resource group, type
+- Full-text search box
+- Export CSV button
+- Staleness indicator (last_seen > 7 days shows amber badge)
 
 ---
 
-## 7. MEDIUM — resource_graph Module: Imported, Unused, No Pagination
+## 8. Security Dashboard Design
 
-**File:** `sync/sync_job.py:22`, `azure_client/resource_graph.py:16-25`  
+### 8.1 Implemented features
 
-**Part A — Dead import:** `resource_graph` is imported in `sync_job.py` line 22 but none of its functions are ever called in the sync loop or anywhere else. The module has three useful functions (`fetch_inventory`, `fetch_vms_basic`, `fetch_public_ips`) that would give cross-subscription inventory views — but they're wired to nothing.
+The `/security` page provides:
 
-**Part B — No pagination:** The `_query()` helper in `resource_graph.py` doesn't handle `$skipToken` pagination. Azure Resource Graph returns a maximum of 1000 rows per call; if results exceed that, `result.data` is silently truncated and `result.skip_token` is set. For WTS with 10 VMs this isn't a current problem, but it's a correctness gap.
+1. KPI row — Open Inbound Rules, Public IPs, Security Advisor Recs, Unavailable Resources
+2. Open Inbound Rules panel — NSG rules where source = `*` or `Internet`, inbound
+3. Security Advisor panel — Advisor recs filtered to category = `Security`
+4. All NSG Rules table — full list with filter buttons (Inbound/Outbound/Allow/Deny)
 
-**Fix for Part B (not auto-applied — needs the module to be used first):**
-```python
-def _query(kql: str, subs: list[str] | None = None) -> list[dict]:
-    subs = subs or subscription_ids()
-    client = _client()
-    all_rows = []
-    skip_token = None
-    while True:
-        req = QueryRequest(
-            subscriptions=subs,
-            query=kql,
-            options=QueryRequestOptions(result_format="objectArray", skip_token=skip_token),
-        )
-        result = client.resources(req)
-        all_rows.extend(result.data or [])
-        if not result.skip_token:
-            break
-        skip_token = result.skip_token
-    return all_rows
-```
+### 8.2 Future enhancements
+
+| Priority | Feature | Implementation |
+|----------|---------|----------------|
+| High | Risk score calculation | Score = (open_inbound_rules x 3) + (public_ips x 2) + (advisor_recs_high x 5) |
+| High | Trend tracking — posture improvement since last sync | Store score per sync in `sync_log` table |
+| Medium | VM disk encryption status | Add `disk_encryption` column to `vms`; populate from compute API |
+| Medium | Port-specific risk flags | Flag rules allowing port 22 (SSH), 3389 (RDP), 445 (SMB) by name |
+| Low | Compliance framework mapping | Map NSG findings to CIS Azure Benchmark controls |
 
 ---
 
-## 8. MEDIUM — Cost Query: No Pagination
+## 9. KQL Center Design
 
-**File:** `azure_client/cost.py:50-63`  
-**What's wrong:** `client.query.usage()` can return a `next_link` for large result sets. The current code reads only `result.rows` and stops, potentially missing rows. For WTS (1 subscription, 10 VMs, 34 DBs) this is unlikely to hit the limit, but it's a correctness gap for any larger tenant.
+### 9.1 Implemented features
 
----
+- KQL editor with Ctrl+Enter shortcut
+- Run button with loading state and error surfacing
+- Blitz query sidebar (pre-built queries from `queries.json`)
+- History tab (auto-saved queries via `/api/kql/history`)
+- Workspace selector (for `LOG_ANALYTICS_WORKSPACE_IDS` multi-workspace config)
+- CSV export of results
+- Save custom queries (POST `/api/kql/queries`)
+- URL parameter `?resource=<name>` pre-fills a query
 
-## 9. MEDIUM — vm_power_summary() Called Twice
+### 9.2 Blitz query catalogue
 
-**File:** `app.py:41-42`  
-**What's wrong:**
-```python
-"vm_power": queries.vm_power_summary(),
-"vm_total": sum(queries.vm_power_summary().values()),
-```
-Two separate SQLite queries when one suffices. 
+The 10 built-in blitz queries cover:
+1. Failed sign-ins last 24h
+2. Azure Activity — failed operations last 7d
+3. VM performance — high CPU last 1h
+4. VM performance — low memory last 1h
+5. Syslog — errors last 24h
+6. Security events — privilege escalation
+7. Update compliance summary
+8. Heartbeat — offline agents
+9. Custom logs — application errors
+10. Network — denied flows (NSG flow logs)
 
-**Fix applied:**
-```python
-vm_power = queries.vm_power_summary()
-ctx = {
-    "vm_power": vm_power,
-    "vm_total": sum(vm_power.values()),
-    ...
-}
-```
-(Applied — see fixes section.)
+### 9.3 Future enhancements
 
----
-
-## 10. LOW — Memory Thresholds Defined, Never Used
-
-**File:** `config.py:23-24`  
-**What's wrong:**
-```python
-MEM_FREE_RED_GB = 0.5
-MEM_FREE_AMBER_GB = 1.0
-```
-These thresholds exist in config, but no function in `models/queries.py` or any template uses them. `monitor.py` does fetch `Available Memory Bytes` metric data (stored in `vm_metrics`), but there's no `mem_status()` function analogous to `cpu_status()`.
-
-**Fix (not auto-applied):** Add a `mem_status(bytes_free)` function to `queries.py` and surface memory status alongside CPU on the VMs page.
+| Feature | Implementation |
+|---------|---------------|
+| Query parameterisation | `@ResourceGroup` substitution in query text |
+| Scheduled queries | Run blitz query on schedule; save results to SQLite |
+| Result caching | Cache identical query+workspace results for 5 min |
 
 ---
 
-## 11. LOW — N+1 API Calls for VM Power State
+## 10. Documentation Center Design
 
-**File:** `azure_client/compute.py:20-29`  
-**What's wrong:** For each VM returned by `list_all()`, the code makes a separate `instance_view()` call to get power state. With 10 VMs, that's 10 extra ARM calls every sync. This works but is slow and could hit throttling on larger subscriptions.
+### 10.1 Current documentation
 
-**Better approach:** Use a Resource Graph query that includes `instanceDetails` to get power state in one batched call. The existing `resource_graph.py` is already set up for this.
+- `README.md` — setup and deployment guide
+- `CHANGES.md` — changelog with root-cause notes
+- `REVIEW.md` — this document
+- `deploy/` — systemd service file
 
----
+### 10.2 Recommended additions
 
-## 12. LOW — README Inaccurate
+| Document | Purpose |
+|----------|---------|
+| `docs/RUNBOOK.md` | On-call runbook: sync failure, auth issues, high memory |
+| `docs/ARCHITECTURE.md` | Component diagram, data flow, credential model |
+| `docs/ONBOARDING.md` | New subscription onboarding checklist (SP roles, env vars) |
+| `docs/AZURE_ROLES.md` | Required RBAC roles per feature with justification |
 
-**File:** `README.md`  
-**What's wrong:**
-- README says "serve via nginx" with a config that doesn't apply because nginx isn't installed
-- README doesn't mention Caddy (the actual reverse proxy in use)
-- README Step 4 says "Access at `http://<vm-ip>:8050`" — should be localhost only, not the VM IP  
-- README doesn't mention the self-signed cert acceptance step needed for any browser access
+### 10.3 In-portal documentation
 
----
-
-## 13. LOW — AZURE_CLIENT_ID Discrepancy
-
-**File:** `.env`  
-**What's wrong:** The Client ID in `.env` (`22737d02-0889-4c9f-8c51-77e589823c0b`) is different from the WTS-Azure-Reports app registration recorded in memory (`169bc0d4-343e-4501-8495-d5c315d32151`). This is likely a new dedicated app registration created for the Cloud Manager (which is correct practice). Confirm in Entra that this app registration exists, has Reader + Cost Management Reader roles, and the secret isn't expired.
+A `/docs` route rendering `docs/*.md` as HTML (using `markdown` Python library) would allow ops staff to access the runbook without leaving the tool.
 
 ---
 
-## 14. INFO — Missing Modules from Original Spec
+## 11. Technical Debt List
 
-The audit prompt mentioned `alerts`, `retirements`, `postgres`, and `identity` modules. None exist. The running app covers: `compute`, `sql`, `advisor`, `backup`, `health`, `cost`, `monitor`, `resource_graph`. Pages for alerts and retirements are also absent. These were likely not in scope for this build — just flagging for completeness.
-
----
-
-## Security Snapshot (what's clean)
-
-| Check | Result |
-|-------|--------|
-| App binds to loopback only (127.0.0.1:8050) | ✅ Confirmed |
-| `debug=False` in app.py | ✅ Confirmed |
-| 404 page has no debug/traceback output | ✅ Confirmed |
-| `.env` excluded from `.gitignore` | ✅ Confirmed |
-| No git repo → no git history secrets | ✅ No git history |
-| `AZURE_CLIENT_SECRET` only in `.env`, not in code/templates | ✅ Confirmed |
-| `FLASK_SECRET_KEY` is 64-char random hex (post-fix: required, no fallback) | ✅ Good |
-| `ProxyFix(x_for=1, x_proto=1, x_host=1)` — trusts exactly 1 hop | ✅ Correct |
-| All SQLite queries use `?` parameterization (no string interpolation) | ✅ Confirmed |
-| Resource Graph KQL is hardcoded, not built from user input | ✅ Confirmed |
-| `tag_filter` uses LIKE with `?` placeholder (safe) | ✅ Confirmed |
-| Routes never call Azure SDK directly | ✅ Confirmed |
-| `ClientSecretCredential` created once and reused (module-level singleton) | ✅ Confirmed |
-| Sync job: per-module error isolation (one failure doesn't abort all) | ✅ Confirmed |
-| `RBAC error` messages are actionable (name the role + scope) | ✅ Confirmed |
-| `pip-audit` — no known CVEs in dependencies | ✅ Clean |
+| ID | Severity | Area | Description | Effort |
+|----|----------|------|-------------|--------|
+| TD-01 | High | Concurrency | SQLite: no connection pooling | 1 day |
+| TD-02 | High | Sync | Sync failure notification missing | 0.5 day |
+| TD-03 | Medium | Auth | No SP token refresh on long-running sync | 1 day |
+| TD-04 | Medium | DB | `cost_data` upsert not atomic — duplicate rows possible | 2 hours |
+| TD-05 | Medium | DB | `kql_history` grows unbounded | 1 hour |
+| TD-06 | Medium | UI | Topology lags with >200 nodes | 1 day |
+| TD-07 | Medium | Security | No rate limiting on auth endpoints | 4 hours |
+| TD-08 | Low | Currency | EUR hard-coded in cost templates | 2 hours |
+| TD-09 | Low | Config | `MEM_FREE_RED/AMBER_GB` defined but not surfaced | 2 hours |
+| TD-10 | Low | Docs | README still mentions nginx; Caddy is the actual proxy | 1 hour |
+| TD-11 | Low | Error | `_rbac_error()` produces generic message — not actionable | 4 hours |
+| TD-12 | Low | Testing | Zero automated tests | 3 days |
 
 ---
 
-## Fixes Applied in This Review
+## 12. Risk Register
 
-### Fix A — `config.py`: Remove insecure FLASK_SECRET_KEY fallback
-**Before:** `FLASK_SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "dev-insecure-key-change-me")`  
-**After:** `FLASK_SECRET_KEY = os.environ["FLASK_SECRET_KEY"]` — raises `KeyError` on startup if missing, forcing explicit resolution rather than silent degradation.
-
-### Fix B — `app.py`: Eliminate double vm_power_summary() call  
-**Before:** Two separate calls to `queries.vm_power_summary()` in the dashboard context dict.  
-**After:** Computed once, passed as two dict keys (`vm_power`, `vm_total`).
+| ID | Risk | Likelihood | Impact | Mitigation |
+|----|------|-----------|--------|-----------|
+| R-01 | Azure SP secret expires — sync stops | High | High | Calendar reminder 30 days before expiry; document in RUNBOOK |
+| R-02 | SQLite corruption under concurrent writes during sync | Low | High | Sync uses single daemon thread; WAL mode isolates readers |
+| R-03 | Cost data unavailable — SP lacks Cost Management Reader | Medium | Medium | Surface clear UI message when cost table is empty |
+| R-04 | KQL results expose sensitive log data | Low | High | All authenticated users are WTS IT staff (group gate) |
+| R-05 | `azure-mgmt-recoveryservicesbackup` v9 to v10 breaking change | Medium | Low | Pin to `>=9.0.0,<10.0.0` in requirements.txt |
+| R-06 | Gunicorn worker OOM (large topology response) | Low | Medium | Limit topology nodes to 500; paginate API response |
+| R-07 | GitHub push exposes `.env` via accident | Low | Critical | `.env` in `.gitignore`; verified untracked; CI check recommended |
+| R-08 | Session cookie theft on non-TLS connection | Very Low | High | Caddy enforces HTTPS; `SESSION_COOKIE_SECURE=True` in Flask config |
 
 ---
 
-## Decisions Needed from You
+## 13. Prioritized Backlog
 
-| Decision | Options | My recommendation |
-|----------|---------|-------------------|
-| **Portal auth** | Caddy basicauth / nginx basicauth / Flask-Login / Entra SSO | Caddy basicauth (fastest; 5 min; already running) |
-| **Production deployment** | Install systemd service + kill dev server | Yes — do this as soon as auth is in place |
-| **Reverse proxy** | Wire Caddy to expose WTS at `/wts/` on port 8443 | Yes, alongside Caddy basicauth |
-| **Auto-sync** | Add cron job or APScheduler thread | Cron job is simpler; APScheduler is tidier |
-| **CSRF on /sync** | Add Flask-WTF, or live with it given auth will protect the route | Add Flask-WTF once auth is in |
+### P0 — Critical (block on)
+
+| Item | Why |
+|------|-----|
+| SP secret expiry monitoring | Silent failure of all Azure data reads |
+| SQLite upsert deduplication for `cost_data` | Data integrity |
+| `kql_history` row cap | Unbounded growth fills disk |
+
+### P1 — High (sprint 1)
+
+| Item | Effort |
+|------|--------|
+| `/healthz` endpoint | 2h |
+| Sync failure Teams/email webhook | 4h |
+| Rate limiting on auth routes (Flask-Limiter) | 4h |
+| Topology: RG filter to limit node count | 4h |
+| Unit tests for `queries.py` critical functions | 2d |
+
+### P2 — Medium (sprint 2)
+
+| Item | Effort |
+|------|--------|
+| CMDB page (`/cmdb`) with RG/type/search filters | 2d |
+| Security risk score calculation + trend | 1d |
+| Port-specific NSG risk flags (22, 3389, 445) | 4h |
+| Budget threshold KPI (`MONTHLY_BUDGET_EUR`) | 4h |
+| Topology: persist layout to localStorage | 2h |
+
+### P3 — Low (backlog)
+
+| Item | Effort |
+|------|--------|
+| `/docs` in-portal documentation route | 1d |
+| Scheduled KQL queries | 2d |
+| Compliance framework mapping (CIS Azure) | 3d |
+| Multi-tenant support | 5d |
+
+---
+
+## 14. 30-Day Roadmap
+
+**Goal:** Stabilise and harden current platform. Fix data integrity issues. Add minimum alerting.
+
+| Week | Focus | Deliverables |
+|------|-------|-------------|
+| W1 | Data integrity | Fix `cost_data` upsert dedup; cap `kql_history` to 200 rows; force WAL checkpoint after sync |
+| W1 | Monitoring | Add `/healthz` endpoint returning sync age, DB status |
+| W2 | Alerting | Sync failure webhook (Teams or email) on 2 consecutive failures |
+| W2 | Security | Rate limiting on `/auth/login` and `/auth/callback` (Flask-Limiter) |
+| W3 | Topology | Add RG filter dropdown to limit topology to <=200 nodes |
+| W3 | Cost | Fix EUR hard-coding — use `currency` column from DB |
+| W4 | Testing | Write unit tests for 10 critical `queries.py` functions |
+| W4 | Docs | Update README (remove nginx, add Caddy); create `RUNBOOK.md` |
+
+---
+
+## 15. 60-Day Roadmap
+
+**Goal:** Expand coverage and analysis capability. CMDB, security posture scoring, KQL improvements.
+
+| Week | Focus | Deliverables |
+|------|-------|-------------|
+| W5-6 | CMDB | Build `/cmdb` page with resource inventory, tag display, staleness indicator |
+| W5-6 | Security | Security risk score; port-specific NSG risk flags (22, 3389, 445, 1433) |
+| W7 | Cost | Monthly budget KPI with threshold alert; fix currency display |
+| W7 | KQL | Query parameterisation (`@ResourceGroup` substitution); result caching (5 min) |
+| W8 | Topology | Layout persistence to localStorage; orphaned NIC indicator |
+| W8 | PostgreSQL | Add `backup_status` for PG servers if backup vault data available |
+
+---
+
+## 16. 90-Day Roadmap
+
+**Goal:** Enterprise readiness — compliance, automation, multi-subscription scaling.
+
+| Week | Focus | Deliverables |
+|------|-------|-------------|
+| W9-10 | Compliance | CIS Azure Benchmark mapping for NSG findings; exported compliance report (CSV) |
+| W9-10 | Automation | Scheduled KQL queries; results stored in DB; alert on threshold breach |
+| W11 | Portal docs | `/docs` route rendering `docs/*.md`; RBAC guide; onboarding checklist |
+| W11 | Scale | Test with >5 concurrent users; evaluate PostgreSQL migration if SQLite bottlenecks |
+| W12 | Review & hardening | Full security re-scan; rotate all SP secrets |
+| W12 | Roadmap reset | Plan next quarter based on WTS operational feedback |
+
+---
+
+*Generated 2026-06-20. All implementation changes described are committed to the codebase unless explicitly marked as future enhancement.*

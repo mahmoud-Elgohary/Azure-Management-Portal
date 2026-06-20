@@ -205,11 +205,80 @@ CREATE TABLE IF NOT EXISTS alerts (
     synced_at           TEXT
 );
 
+-- ── NSG security rules (Phase 5 — security dashboard) ───────────────────
+CREATE TABLE IF NOT EXISTS nsg_rules (
+    rule_id         TEXT PRIMARY KEY,   -- nsg_id||'/'||name
+    nsg_id          TEXT NOT NULL,
+    nsg_name        TEXT,
+    name            TEXT,
+    priority        INTEGER,
+    direction       TEXT,               -- Inbound | Outbound
+    access          TEXT,               -- Allow | Deny
+    protocol        TEXT,
+    source_prefix   TEXT,
+    source_port     TEXT,
+    dest_prefix     TEXT,
+    dest_port       TEXT,
+    synced_at       TEXT
+);
+
+-- ── PostgreSQL Flexible Servers ───────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS postgresql_servers (
+    server_id       TEXT PRIMARY KEY,
+    name            TEXT,
+    resource_group  TEXT,
+    subscription_id TEXT,
+    location        TEXT,
+    version         TEXT,
+    state           TEXT,
+    admin_login     TEXT,
+    storage_gb      INTEGER,
+    sku_name        TEXT,
+    tags            TEXT,
+    synced_at       TEXT
+);
+
+-- ── KQL query history ─────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS kql_history (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    query           TEXT    NOT NULL,
+    workspace_id    TEXT,
+    executed_at     TEXT    NOT NULL,
+    row_count       INTEGER,
+    elapsed_ms      INTEGER,
+    had_error       INTEGER DEFAULT 0
+);
+
+-- ── Universal resource inventory (CMDB foundation) ────────────────────────
+CREATE TABLE IF NOT EXISTS resources (
+    resource_id     TEXT PRIMARY KEY,
+    name            TEXT,
+    type            TEXT,               -- microsoft.compute/virtualmachines etc.
+    resource_group  TEXT,
+    subscription_id TEXT,
+    location        TEXT,
+    tags            TEXT,               -- JSON
+    kind            TEXT,
+    sku             TEXT,
+    synced_at       TEXT
+);
+
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_vm_metrics_vm_metric ON vm_metrics(vm_id, metric);
-CREATE INDEX IF NOT EXISTS idx_advisor_resource ON advisor_recs(resource_id);
-CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);
-CREATE INDEX IF NOT EXISTS idx_alerts_fired ON alerts(fired_time);
+CREATE INDEX IF NOT EXISTS idx_advisor_resource    ON advisor_recs(resource_id);
+CREATE INDEX IF NOT EXISTS idx_advisor_category    ON advisor_recs(category);
+CREATE INDEX IF NOT EXISTS idx_alerts_severity     ON alerts(severity);
+CREATE INDEX IF NOT EXISTS idx_alerts_fired        ON alerts(fired_time);
+CREATE INDEX IF NOT EXISTS idx_vms_rg              ON vms(resource_group);
+CREATE INDEX IF NOT EXISTS idx_vms_name            ON vms(name);
+CREATE INDEX IF NOT EXISTS idx_backup_vm_name      ON backup_status(vm_name);
+CREATE INDEX IF NOT EXISTS idx_cost_date           ON cost_daily(date);
+CREATE INDEX IF NOT EXISTS idx_cost_rg             ON cost_daily(resource_group);
+CREATE INDEX IF NOT EXISTS idx_health_state        ON resource_health(availability_state);
+CREATE INDEX IF NOT EXISTS idx_nsg_rules_nsg       ON nsg_rules(nsg_id);
+CREATE INDEX IF NOT EXISTS idx_resources_type      ON resources(type);
+CREATE INDEX IF NOT EXISTS idx_resources_rg        ON resources(resource_group);
+CREATE INDEX IF NOT EXISTS idx_kql_history_time    ON kql_history(executed_at);
 """
 
 

@@ -17,6 +17,7 @@
     <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#6b7280"></div> NIC</div>
     <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#f59e0b"></div> Public IP</div>
     <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#dc2626"></div> NSG</div>
+    <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#0891b2"></div> PostgreSQL</div>
     <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#374151"></div> On-prem (logical)</div>
   </div>
   <div class="ms-auto d-flex gap-2">
@@ -95,11 +96,12 @@ function renderCytoscape(nodes, edges) {
 
   const colorMap = {
     vm: '#0078d4', vnet: '#7c3aed', subnet: '#a78bfa', sql: '#059669',
-    nic: '#6b7280', pip: '#f59e0b', nsg: '#dc2626', onprem: '#374151', default: '#9ca3af'
+    nic: '#6b7280', pip: '#f59e0b', nsg: '#dc2626', postgresql: '#0891b2',
+    onprem: '#374151', default: '#9ca3af'
   };
   const shapeMap = {
     vm: 'rectangle', vnet: 'round-rectangle', subnet: 'round-rectangle',
-    sql: 'diamond', nic: 'ellipse', pip: 'star', nsg: 'hexagon'
+    sql: 'diamond', nic: 'ellipse', pip: 'star', nsg: 'hexagon', postgresql: 'barrel'
   };
 
   cy = cytoscape({

@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+{% block title %}Security Center — WTS Azure Manager{% endblock %}
+{% block page_title %}Security Center{% endblock %}
+
+{% block content %}
+
+<!-- Security KPI row -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value {% if summary.open_inbound_rules %}text-danger{% else %}text-success{% endif %}">
+        {{ summary.get('open_inbound_rules', 0) }}
+      </div>
+      <div class="kpi-label">Open Inbound Rules</div>
+      <div class="kpi-sub">NSG rules allowing Any/Internet source</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value {% if summary.public_ip_count %}text-warning{% else %}text-success{% endif %}">
+        {{ summary.get('public_ip_count', 0) }}
+      </div>
+      <div class="kpi-label">Public IPs</div>
+      <div class="kpi-sub">Externally reachable endpoints</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value {% if summary.security_advisor_recs %}text-danger{% else %}text-success{% endif %}">
+        {{ summary.get('security_advisor_recs', 0) }}
+      </div>
+      <div class="kpi-label">Security Advisor Recs</div>
+      <div class="kpi-sub"><a href="{{ url_for('advisor_view', category='Security') }}" class="text-link">View all</a></div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value {% if summary.unavailable_resources %}text-danger{% else %}text-success{% endif %}">
+        {{ summary.get('unavailable_resources', 0) }}
+      </div>
+      <div class="kpi-label">Unavailable Resources</div>
+      <div class="kpi-sub"><a href="{{ url_for('health_view', state='Unavailable') }}" class="text-link">View health</a></div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+
+  <!-- Open inbound NSG rules -->
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center gap-2">
+        <i class="bi bi-shield-x text-danger me-1"></i>
+        Open Inbound Rules (Any/Internet Source)
+        <span class="badge bg-danger ms-auto">{{ open_ports | length }}</span>
+      </div>
+      <div class="card-body p-0">
+        {% if open_ports %}
+        <div class="table-responsive" style="max-height:320px;overflow-y:auto">
+          <table class="table table-sm mb-0">
+            <thead class="table-light sticky-top">
+              <tr><th>NSG</th><th>Rule</th><th>Port</th><th>Priority</th><th>Protocol</th></tr>
+            </thead>
+            <tbody>
+              {% for rule in open_ports %}
+              <tr>
+                <td><small>{{ rule.nsg_name }}</small></td>
+                <td>{{ rule.name }}</td>
+                <td><strong>{{ rule.dest_port }}</strong></td>
+                <td>{{ rule.priority }}</td>
+                <td><span class="badge bg-secondary">{{ rule.protocol }}</span></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="p-3 text-center text-muted small">
+          <i class="bi bi-shield-check fs-2 d-block mb-1 text-success"></i>
+          No open inbound rules from Any/Internet
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Security Advisor recommendations -->
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center gap-2">
+        <i class="bi bi-lightbulb text-warning me-1"></i>
+        Security Advisor Recommendations
+        <span class="badge bg-warning text-dark ms-auto">{{ advisor_security | length }}</span>
+      </div>
+      <div class="card-body p-0">
+        {% if advisor_security %}
+        <div class="table-responsive" style="max-height:320px;overflow-y:auto">
+          <table class="table table-sm mb-0">
+            <thead class="table-light sticky-top">
+              <tr><th>Impact</th><th>Recommendation</th><th>Solution</th></tr>
+            </thead>
+            <tbody>
+              {% for rec in advisor_security %}
+              <tr>
+                <td>
+                  <span class="badge {% if rec.impact == 'High' %}bg-danger{% elif rec.impact == 'Medium' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                    {{ rec.impact }}
+                  </span>
+                </td>
+                <td><small>{{ (rec.short_description or '')[:80] }}</small></td>
+                <td><small class="text-muted">{{ (rec.solution or '')[:60] }}</small></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="p-3 text-center text-muted small">
+          <i class="bi bi-check-circle fs-2 d-block mb-1 text-success"></i>
+          No security recommendations
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- All NSG rules -->
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header d-flex align-items-center gap-2">
+        <i class="bi bi-diagram-2 me-1"></i> All NSG Security Rules
+        <span class="badge bg-secondary ms-auto">{{ nsg_rules | length }}</span>
+        <div class="ms-2 d-flex gap-1">
+          <button class="btn btn-sm btn-outline-secondary" onclick="filterRules('all')">All</button>
+          <button class="btn btn-sm btn-outline-danger" onclick="filterRules('Inbound')">Inbound</button>
+          <button class="btn btn-sm btn-outline-primary" onclick="filterRules('Outbound')">Outbound</button>
+          <button class="btn btn-sm btn-outline-success" onclick="filterRules('Allow')">Allow</button>
+          <button class="btn btn-sm btn-outline-dark" onclick="filterRules('Deny')">Deny</button>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        {% if nsg_rules %}
+        <div class="table-responsive" style="max-height:400px;overflow-y:auto">
+          <table class="table table-sm mb-0" id="nsg-rules-table">
+            <thead class="table-dark sticky-top">
+              <tr><th>NSG</th><th>Rule Name</th><th>Priority</th><th>Direction</th><th>Access</th><th>Protocol</th><th>Source</th><th>Source Port</th><th>Destination</th><th>Dest Port</th></tr>
+            </thead>
+            <tbody>
+              {% for rule in nsg_rules %}
+              <tr data-direction="{{ rule.direction }}" data-access="{{ rule.access }}">
+                <td><small>{{ rule.nsg_name }}</small></td>
+                <td>{{ rule.name }}</td>
+                <td>{{ rule.priority }}</td>
+                <td>
+                  <span class="badge {% if rule.direction == 'Inbound' %}bg-danger{% else %}bg-primary{% endif %} bg-opacity-75">
+                    {{ rule.direction }}
+                  </span>
+                </td>
+                <td>
+                  <span class="badge {% if rule.access == 'Allow' %}bg-success{% else %}bg-dark{% endif %}">
+                    {{ rule.access }}
+                  </span>
+                </td>
+                <td><code>{{ rule.protocol }}</code></td>
+                <td><small>{{ rule.source_prefix or '*' }}</small></td>
+                <td><small>{{ rule.source_port or '*' }}</small></td>
+                <td><small>{{ rule.dest_prefix or '*' }}</small></td>
+                <td><strong>{{ rule.dest_port or '*' }}</strong></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="p-4 text-center text-muted">
+          <i class="bi bi-shield-slash fs-2 d-block mb-2"></i>
+          No NSG rules found. Run a sync to populate security data.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function filterRules(filter) {
+  const rows = document.querySelectorAll('#nsg-rules-table tbody tr');
+  rows.forEach(row => {
+    if (filter === 'all') {
+      row.style.display = '';
+    } else if (filter === 'Inbound' || filter === 'Outbound') {
+      row.style.display = row.dataset.direction === filter ? '' : 'none';
+    } else {
+      row.style.display = row.dataset.access === filter ? '' : 'none';
+    }
+  });
+}
+</script>
+{% endblock %}

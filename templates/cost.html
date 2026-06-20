@@ -1,55 +1,188 @@
 {% extends "base.html" %}
-{% block title %}Cost — WTS Azure Manager{% endblock %}
+{% block title %}Cost Management — WTS Azure Manager{% endblock %}
 {% block page_title %}Cost Management{% endblock %}
 
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
 {% block content %}
-<h5 class="mb-3">Month-to-Date Spend</h5>
 
+<!-- KPI row -->
 <div class="row g-3 mb-4">
-  <div class="col-md-4">
-    <div class="card">
-      <div class="card-body text-center">
-        <div class="display-6">${{ mtd }}</div>
-        <div class="text-muted">Month-to-Date</div>
-      </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-success">€{{ mtd }}</div>
+      <div class="kpi-label">Month-to-Date</div>
+      <div class="kpi-sub">Current month spend</div>
     </div>
   </div>
-  {% if anomalies %}
-  <div class="col-md-8">
-    <div class="card border-danger">
-      <div class="card-header text-danger fw-bold">Cost Anomalies Detected</div>
-      <div class="card-body">
-        {% for a in anomalies %}
-          <div class="small">{{ a.date }}: <strong>${{ "%.2f"|format(a.cost) }}</strong> vs avg ${{ "%.2f"|format(a.avg) }}</div>
-        {% endfor %}
-      </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-primary" id="kpi-rg-count">—</div>
+      <div class="kpi-label">Resource Groups</div>
+      <div class="kpi-sub">with spend this month</div>
     </div>
   </div>
-  {% endif %}
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value {% if anomalies %}text-danger{% else %}text-success{% endif %}">
+        {{ anomalies | length }}
+      </div>
+      <div class="kpi-label">Anomaly Days</div>
+      <div class="kpi-sub">{% if anomalies %}Unusual spend detected{% else %}No anomalies{% endif %}</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-muted" id="kpi-top-rg">—</div>
+      <div class="kpi-label">Top Resource Group</div>
+      <div class="kpi-sub" id="kpi-top-rg-cost">by MTD cost</div>
+    </div>
+  </div>
 </div>
 
-<!-- Daily trend table -->
-<h5>Daily Spend by Resource Group</h5>
-{% if daily %}
-<div class="table-responsive">
-  <table class="table table-sm table-hover">
-    <thead class="table-dark">
-      <tr><th>Date</th><th>Subscription</th><th>Resource Group</th><th>Cost</th><th>Currency</th></tr>
-    </thead>
-    <tbody>
-      {% for row in daily %}
-      <tr>
-        <td>{{ row.date }}</td>
-        <td><small>{{ row.subscription_id[-8:] }}</small></td>
-        <td>{{ row.resource_group or '(unassigned)' }}</td>
-        <td>${{ "%.4f"|format(row.cost) }}</td>
-        <td>{{ row.currency }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+{% if anomalies %}
+<div class="alert alert-danger alert-dismissible fade show mb-4" role="alert">
+  <strong><i class="bi bi-exclamation-triangle me-1"></i>Cost Anomalies Detected</strong>
+  {% for a in anomalies %}
+    <div class="small mt-1">{{ a.date }}: <strong>€{{ "%.2f"|format(a.cost) }}</strong> vs avg €{{ "%.2f"|format(a.avg) }} ({{ ((a.cost/a.avg - 1)*100)|int }}% above average)</div>
+  {% endfor %}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
 </div>
-{% else %}
-  <div class="alert alert-info">No cost data. Ensure Cost Management Reader role is assigned and sync has run.</div>
 {% endif %}
+
+<!-- Charts row -->
+<div class="row g-3 mb-4">
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-graph-up me-2"></i>Daily Spend Trend
+        <span class="text-muted small ms-2">(all synced history)</span>
+      </div>
+      <div class="card-body">
+        <div style="height:260px"><canvas id="chart-trend"></canvas></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card">
+      <div class="card-header"><i class="bi bi-pie-chart me-2"></i>MTD by Resource Group</div>
+      <div class="card-body">
+        <div style="height:260px"><canvas id="chart-rg"></canvas></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Details table -->
+<div class="card">
+  <div class="card-header d-flex align-items-center gap-2">
+    <i class="bi bi-table me-1"></i>Daily Spend by Resource Group
+    <span class="text-muted small ms-1">({{ daily | length }} rows)</span>
+  </div>
+  <div class="card-body p-0">
+    {% if daily %}
+    <div class="table-responsive" style="max-height:420px;overflow-y:auto">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-dark sticky-top">
+          <tr><th>Date</th><th>Resource Group</th><th>Cost</th><th>Currency</th></tr>
+        </thead>
+        <tbody>
+          {% for row in daily | sort(attribute='date', reverse=True) %}
+          <tr>
+            <td>{{ row.date }}</td>
+            <td>{{ row.resource_group or '(unassigned)' }}</td>
+            <td class="fw-500">€{{ "%.4f"|format(row.cost) }}</td>
+            <td><small class="text-muted">{{ row.currency }}</small></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="p-4 text-center text-muted">
+      <i class="bi bi-currency-euro fs-2 d-block mb-2 text-muted"></i>
+      No cost data. Ensure Cost Management Reader role is assigned and sync has run.
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadCharts() {
+  const [trendResp, rgResp] = await Promise.all([
+    fetch('/api/cost/trend'),
+    fetch('/api/cost/by-rg'),
+  ]);
+  const trend = await trendResp.json();
+  const rgData = await rgResp.json();
+
+  // Update KPI cards
+  document.getElementById('kpi-rg-count').textContent = rgData.length;
+  if (rgData.length) {
+    document.getElementById('kpi-top-rg').textContent = rgData[0].resource_group || '(unassigned)';
+    document.getElementById('kpi-top-rg-cost').textContent = '€' + (rgData[0].total || 0).toFixed(2) + ' MTD';
+  }
+
+  // Daily trend chart
+  const trendLabels = trend.map(r => r.date);
+  const trendVals   = trend.map(r => r.total);
+  new Chart(document.getElementById('chart-trend'), {
+    type: 'line',
+    data: {
+      labels: trendLabels,
+      datasets: [{
+        label: 'Daily Cost (€)',
+        data: trendVals,
+        borderColor: '#0078d4',
+        backgroundColor: 'rgba(0,120,212,0.08)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: trendLabels.length > 60 ? 0 : 3,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 12, font: { size: 10 } } },
+        y: { ticks: { font: { size: 10 }, callback: v => '€' + v.toFixed(0) } }
+      }
+    }
+  });
+
+  // RG donut chart — top 8 + "Other"
+  const TOP = 8;
+  let rgLabels = [], rgVals = [], rgColors = [];
+  const palette = ['#0078d4','#7c3aed','#059669','#dc2626','#f59e0b','#0891b2','#be185d','#65a30d','#9ca3af'];
+  rgData.slice(0, TOP).forEach((r, i) => {
+    rgLabels.push((r.resource_group || '(unassigned)').replace('rg-', ''));
+    rgVals.push(r.total);
+    rgColors.push(palette[i % palette.length]);
+  });
+  if (rgData.length > TOP) {
+    rgLabels.push('Other');
+    rgVals.push(rgData.slice(TOP).reduce((s, r) => s + r.total, 0));
+    rgColors.push('#9ca3af');
+  }
+
+  new Chart(document.getElementById('chart-rg'), {
+    type: 'doughnut',
+    data: { labels: rgLabels, datasets: [{ data: rgVals, backgroundColor: rgColors, borderWidth: 1 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { font: { size: 10 }, boxWidth: 10 } },
+        tooltip: { callbacks: { label: ctx => ` €${ctx.parsed.toFixed(2)}` } }
+      }
+    }
+  });
+}
+
+loadCharts().catch(e => console.warn('Cost charts failed:', e));
+</script>
 {% endblock %}

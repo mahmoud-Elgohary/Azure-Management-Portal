@@ -18,14 +18,28 @@
 
   <!-- Blitz query sidebar -->
   <div class="col-lg-3">
-    <div class="card h-100">
-      <div class="card-header d-flex align-items-center gap-1">
-        <i class="bi bi-lightning-charge me-1"></i> Blitz Queries
-        <button class="btn btn-sm btn-link ms-auto p-0 text-muted" onclick="showSaveModal()" title="Save current query">
-          <i class="bi bi-plus-circle"></i>
-        </button>
-      </div>
-      <div class="card-body p-2" id="blitz-list">
+    <div class="card">
+      <!-- Sidebar tabs: Blitz / History -->
+      <ul class="nav nav-tabs nav-fill border-bottom-0" id="sidebar-tabs">
+        <li class="nav-item">
+          <button class="nav-link active py-2" onclick="switchTab('blitz')">
+            <i class="bi bi-lightning-charge me-1"></i> Blitz
+          </button>
+        </li>
+        <li class="nav-item">
+          <button class="nav-link py-2" onclick="switchTab('history')">
+            <i class="bi bi-clock-history me-1"></i> History
+          </button>
+        </li>
+      </ul>
+
+      <!-- Blitz list -->
+      <div id="tab-blitz" class="card-body p-2 sidebar-tab-panel" style="max-height:520px;overflow-y:auto">
+        <div class="d-flex justify-content-end mb-1">
+          <button class="btn btn-sm btn-link p-0 text-muted" onclick="showSaveModal()" title="Save current query">
+            <i class="bi bi-plus-circle"></i> Save current
+          </button>
+        </div>
         {% if blitz %}
           {% for q in blitz %}
           <a class="blitz-query-item d-flex align-items-start gap-1" href="#"
@@ -39,8 +53,14 @@
           </a>
           {% endfor %}
         {% else %}
-        <div class="text-muted small p-2">No saved queries yet. Run a query and click Save.</div>
+        <div class="text-muted small p-2">No saved queries. Run a query and click Save.</div>
         {% endif %}
+      </div>
+
+      <!-- History list -->
+      <div id="tab-history" class="card-body p-2 sidebar-tab-panel" style="display:none;max-height:520px;overflow-y:auto">
+        <div class="text-muted small mb-1">Recent queries (auto-saved)</div>
+        <div id="history-list"><div class="text-muted small">Loading…</div></div>
       </div>
     </div>
   </div>
@@ -50,9 +70,17 @@
 
     <!-- Editor card -->
     <div class="card mb-3">
-      <div class="card-header d-flex align-items-center gap-2">
+      <div class="card-header d-flex align-items-center gap-2 flex-wrap">
         <i class="bi bi-code-slash"></i> Query Editor
+        {% if workspaces | length > 1 %}
+        <select id="workspace-select" class="form-select form-select-sm ms-1" style="max-width:220px">
+          {% for ws in workspaces %}
+          <option value="{{ ws.id }}" {% if ws.id == workspace_id %}selected{% endif %}>{{ ws.name }}</option>
+          {% endfor %}
+        </select>
+        {% else %}
         <span class="text-muted small ms-1">Workspace: <code>{{ workspace_id or 'not configured' }}</code></span>
+        {% endif %}
         <div class="ms-auto d-flex gap-2">
           <button class="btn btn-sm btn-outline-secondary" onclick="clearEditor()"><i class="bi bi-x"></i> Clear</button>
           <button class="btn btn-sm btn-primary" id="run-btn" onclick="runQuery()" {% if not workspace_id %}disabled{% endif %}>
@@ -128,6 +156,56 @@
 const CSRF = {{ csrf_token() | tojson }};
 let _lastColumns = [], _lastRows = [];
 
+/* ── Workspace selector ─────────────────────────────────────────────── */
+function getWorkspaceId() {
+  const sel = document.getElementById('workspace-select');
+  return sel ? sel.value : {{ workspace_id | tojson }};
+}
+
+/* ── Sidebar tabs ───────────────────────────────────────────────────── */
+function switchTab(tab) {
+  document.querySelectorAll('.sidebar-tab-panel').forEach(p => p.style.display = 'none');
+  document.querySelectorAll('#sidebar-tabs .nav-link').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + tab).style.display = '';
+  event.currentTarget.classList.add('active');
+  if (tab === 'history') loadHistory();
+}
+
+async function loadHistory() {
+  const el = document.getElementById('history-list');
+  try {
+    const r = await fetch('/api/kql/history');
+    const data = await r.json();
+    const hist = data.history || [];
+    if (!hist.length) {
+      el.innerHTML = '<div class="text-muted small">No query history yet.</div>';
+      return;
+    }
+    el.innerHTML = hist.map(h => `
+      <a class="blitz-query-item d-flex align-items-start gap-1" href="#"
+         onclick="loadBlitz(${JSON.stringify(h.query)}); return false;"
+         title="${esc(h.query)}">
+        <i class="bi bi-clock mt-1 text-muted"></i>
+        <div>
+          <div class="text-truncate" style="max-width:180px"><small>${esc(h.query.substring(0,60))}</small></div>
+          <small class="text-muted">${esc(h.executed_at || '')} · ${h.row_count ?? '?'} rows</small>
+        </div>
+      </a>`).join('');
+  } catch(e) {
+    el.innerHTML = '<div class="text-muted small">Failed to load history.</div>';
+  }
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* ── Editor helpers ────────────────────────────────────────────────── */
+function clearEditor() {
+  document.getElementById('kql-editor').value = '';
+  setUI('idle');
+}
+
 /* ── Blitz queries ─────────────────────────────────────────────────── */
 function loadBlitz(query) {
   document.getElementById('kql-editor').value = query;
@@ -148,7 +226,7 @@ async function runQuery() {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF },
-      body: JSON.stringify({ query })
+      body: JSON.stringify({ query, workspace_id: getWorkspaceId() })
     });
     if (!r.ok && r.status !== 500) {
       // 302→login or unexpected status: surface it rather than silently failing
@@ -220,6 +298,7 @@ function setUI(state) {
   document.getElementById('results-card').style.display  = state === 'table'   ? '' : 'none';
   document.getElementById('error-panel').style.display   = state === 'error'   ? '' : 'none';
   document.getElementById('no-data-hint').style.display  = state === 'nodata'  ? '' : 'none';
+  // 'idle' just hides everything — already handled above
 }
 
 function showError(msg) {

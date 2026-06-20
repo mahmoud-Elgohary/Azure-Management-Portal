@@ -14,3 +14,4 @@ azure-mgmt-recoveryservices>=3.0.0
 azure-mgmt-resourcehealth>=1.0.0b7
 azure-mgmt-resourcegraph>=8.0.0
 azure-monitor-query>=1.4.0,<2.0.0
+azure-mgmt-rdbms>=10.0.0

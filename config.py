@@ -42,5 +42,24 @@ COST_ANOMALY_MULTIPLIER = 1.5   # flag day if spend > N × recent daily average
 
 BACKUP_STALE_HOURS = 26         # flag VM if last successful backup older than this
 
+# ── Session ──────────────────────────────────────────────────────────────────
+SESSION_TIMEOUT_MINUTES = int(os.environ.get("SESSION_TIMEOUT_MINUTES", 480))  # 8 hours
+
 # ── Log Analytics KQL console ─────────────────────────────────────────────────
 LOG_ANALYTICS_WORKSPACE_ID = os.environ.get("LOG_ANALYTICS_WORKSPACE_ID", "")
+
+# Multi-workspace: "Display Name:workspace-id,Name2:id2"
+# If set, overrides the single LOG_ANALYTICS_WORKSPACE_ID for the workspace picker.
+_ws_raw = os.environ.get("LOG_ANALYTICS_WORKSPACE_IDS", "")
+LOG_ANALYTICS_WORKSPACES: list[dict] = []
+if _ws_raw:
+    for _entry in _ws_raw.split(","):
+        _entry = _entry.strip()
+        if ":" in _entry:
+            _name, _wid = _entry.split(":", 1)
+            LOG_ANALYTICS_WORKSPACES.append({"name": _name.strip(), "id": _wid.strip()})
+if not LOG_ANALYTICS_WORKSPACES and LOG_ANALYTICS_WORKSPACE_ID:
+    LOG_ANALYTICS_WORKSPACES = [{"name": "Default", "id": LOG_ANALYTICS_WORKSPACE_ID}]
+
+# ── Sync rate limit ───────────────────────────────────────────────────────────
+MIN_SYNC_INTERVAL_MINUTES = int(os.environ.get("MIN_SYNC_INTERVAL_MINUTES", 5))

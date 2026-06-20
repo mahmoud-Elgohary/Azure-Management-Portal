@@ -45,6 +45,11 @@
       <i class="bi bi-database"></i> SQL / Elastic Pools
     </a>
 
+    <a href="{{ url_for('postgresql_view') }}"
+       class="{% if request.endpoint == 'postgresql_view' %}active{% endif %}">
+      <i class="bi bi-database-fill-gear"></i> PostgreSQL
+    </a>
+
     <a href="{{ url_for('cost_view') }}"
        class="{% if request.endpoint == 'cost_view' %}active{% endif %}">
       <i class="bi bi-currency-euro"></i> Cost
@@ -63,6 +68,13 @@
     <a href="{{ url_for('backup_view') }}"
        class="{% if request.endpoint == 'backup_view' %}active{% endif %}">
       <i class="bi bi-shield-check"></i> Backup
+    </a>
+
+    <div class="nav-section-label">Security</div>
+
+    <a href="{{ url_for('security_view') }}"
+       class="{% if request.endpoint == 'security_view' %}active{% endif %}">
+      <i class="bi bi-shield-exclamation"></i> Security Center
     </a>
 
     <div class="nav-section-label">Investigate</div>

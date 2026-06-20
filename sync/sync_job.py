@@ -6,6 +6,8 @@ Never called from page load — routes always read the cache.
 
 import sys
 import os
+import json
+import logging
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from datetime import datetime, timezone
@@ -21,6 +23,14 @@ from azure_client import (
     monitor,
     network,
     alerts as alerts_client,
+    postgresql as pg_client,
+)
+
+log = logging.getLogger("wts.sync")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
 )
 
 
@@ -31,7 +41,7 @@ def _now() -> str:
 def _upsert_vms(conn, rows: list[dict], ts: str):
     for r in rows:
         if "_error" in r:
-            print(f"  [warn] VM fetch error (sub={r.get('subscription_id')}): {r['_error']}")
+            log.warning("VM fetch error (sub=%s): %s", r.get("subscription_id"), r["_error"])
             continue
         conn.execute(
             """INSERT INTO vms
@@ -49,7 +59,7 @@ def _upsert_vms(conn, rows: list[dict], ts: str):
 def _upsert_sql_servers(conn, rows: list[dict], ts: str):
     for r in rows:
         if "_error" in r:
-            print(f"  [warn] SQL server fetch error: {r['_error']}")
+            log.warning("SQL server fetch error: %s", r["_error"])
             continue
         conn.execute(
             """INSERT INTO sql_servers
@@ -96,7 +106,7 @@ def _upsert_advisor(conn, rows: list[dict], ts: str):
     conn.execute("DELETE FROM advisor_recs")
     for r in rows:
         if "_error" in r:
-            print(f"  [warn] Advisor error: {r['_error']}")
+            log.warning("Advisor error: %s", r["_error"])
             continue
         conn.execute(
             """INSERT OR REPLACE INTO advisor_recs
@@ -110,7 +120,7 @@ def _upsert_backup(conn, rows: list[dict], ts: str):
     conn.execute("DELETE FROM backup_status")
     for r in rows:
         if "_error" in r:
-            print(f"  [warn] Backup error: {r['_error']}")
+            log.warning("Backup error: %s", r["_error"])
             continue
         conn.execute(
             """INSERT OR REPLACE INTO backup_status
@@ -124,7 +134,7 @@ def _upsert_health(conn, rows: list[dict], ts: str):
     conn.execute("DELETE FROM resource_health")
     for r in rows:
         if "_error" in r:
-            print(f"  [warn] Health error: {r['_error']}")
+            log.warning("Health error: %s", r["_error"])
             continue
         conn.execute(
             """INSERT OR REPLACE INTO resource_health
@@ -137,7 +147,7 @@ def _upsert_health(conn, rows: list[dict], ts: str):
 def _upsert_costs(conn, rows: list[dict], ts: str):
     for r in rows:
         if "_error" in r:
-            print(f"  [warn] Cost error: {r['_error']}")
+            log.warning("Cost error: %s", r["_error"])
             continue
         conn.execute(
             """INSERT INTO cost_daily
@@ -157,6 +167,41 @@ def _upsert_metrics(conn, rows: list[dict]):
             """INSERT OR IGNORE INTO vm_metrics (vm_id,metric,timestamp,value)
                VALUES (:vm_id,:metric,:timestamp,:value)""",
             r,
+        )
+
+
+def _upsert_nsg_rules(conn, rows: list[dict], ts: str):
+    conn.execute("DELETE FROM nsg_rules")
+    for r in rows:
+        if "_error" in r:
+            log.warning("NSG rules error: %s", r["_error"])
+            continue
+        conn.execute(
+            """INSERT OR REPLACE INTO nsg_rules
+               (rule_id,nsg_id,nsg_name,name,priority,direction,access,protocol,
+                source_prefix,source_port,dest_prefix,dest_port,synced_at)
+               VALUES (:rule_id,:nsg_id,:nsg_name,:name,:priority,:direction,:access,:protocol,
+                :source_prefix,:source_port,:dest_prefix,:dest_port,:synced_at)""",
+            {**r, "synced_at": ts},
+        )
+
+
+def _upsert_postgresql(conn, rows: list[dict], ts: str):
+    for r in rows:
+        if "_error" in r:
+            log.warning("PostgreSQL error: %s", r["_error"])
+            continue
+        conn.execute(
+            """INSERT INTO postgresql_servers
+               (server_id,name,resource_group,subscription_id,location,version,state,
+                admin_login,storage_gb,sku_name,tags,synced_at)
+               VALUES (:server_id,:name,:resource_group,:subscription_id,:location,:version,:state,
+                :admin_login,:storage_gb,:sku_name,:tags,:synced_at)
+               ON CONFLICT(server_id) DO UPDATE SET
+                 state=excluded.state, version=excluded.version,
+                 storage_gb=excluded.storage_gb, sku_name=excluded.sku_name,
+                 tags=excluded.tags, synced_at=excluded.synced_at""",
+            {**r, "synced_at": ts},
         )
 
 
@@ -228,7 +273,7 @@ def _upsert_alerts(conn, rows: list[dict], ts: str):
     conn.execute("DELETE FROM alerts")
     for r in rows:
         if "_error" in r:
-            print(f"  [warn] Alerts error: {r['_error']}")
+            log.warning("Alerts error: %s", r["_error"])
             continue
         conn.execute(
             """INSERT OR REPLACE INTO alerts
@@ -243,113 +288,136 @@ def _upsert_alerts(conn, rows: list[dict], ts: str):
 def run_sync():
     init_db()
     ts = _now()
-    print(f"[sync] Starting at {ts}")
+    log.info("Sync starting at %s", ts)
     errors = []
-    total_sections = 8  # VMs, SQL, Advisor, Backup, Health, Cost, Network, Alerts
+    total_sections = 10  # VMs, SQL, PostgreSQL, Advisor, Backup, Health, Cost, Network, NSG rules, Alerts
 
     conn = get_db()
 
     # VMs
-    print("[sync] Fetching VMs …")
+    log.info("Fetching VMs …")
     try:
         vm_rows = compute.fetch_all_vms()
         _upsert_vms(conn, vm_rows, ts)
         vm_ok = len([r for r in vm_rows if "_error" not in r])
-        print(f"  → {vm_ok} VMs cached")
+        log.info("  → %d VMs cached", vm_ok)
 
-        # VM metrics (last 2 hours per sync; lazy-load per-resource for longer windows)
-        print("[sync] Fetching VM metrics (last 2 h) …")
+        log.info("Fetching VM metrics (last 2 h) …")
         vm_ids = [r["vm_id"] for r in vm_rows if "_error" not in r]
         for vm_id in vm_ids:
             metric_rows = monitor.fetch_vm_metrics(vm_id, hours=2)
             _upsert_metrics(conn, metric_rows)
-        print(f"  → metrics fetched for {len(vm_ids)} VMs")
+        log.info("  → metrics fetched for %d VMs", len(vm_ids))
     except Exception as exc:
         err = f"VMs: {exc}"
-        print(f"  [error] {err}")
+        log.error(err)
         errors.append(err)
 
     # SQL
-    print("[sync] Fetching SQL resources …")
+    log.info("Fetching SQL resources …")
     try:
         sql_data = sql_client.fetch_all_sql()
         _upsert_sql_servers(conn, sql_data["servers"], ts)
         _upsert_databases(conn, sql_data["databases"], ts)
         _upsert_elastic_pools(conn, sql_data["elastic_pools"], ts)
-        print(f"  → {len(sql_data['servers'])} servers, {len(sql_data['elastic_pools'])} pools, {len(sql_data['databases'])} DBs")
+        log.info("  → %d servers, %d pools, %d DBs",
+                 len(sql_data["servers"]), len(sql_data["elastic_pools"]), len(sql_data["databases"]))
     except Exception as exc:
         err = f"SQL: {exc}"
-        print(f"  [error] {err}")
+        log.error(err)
+        errors.append(err)
+
+    # PostgreSQL Flexible Servers
+    log.info("Fetching PostgreSQL Flexible Servers …")
+    try:
+        pg_rows = pg_client.fetch_all_postgresql()
+        _upsert_postgresql(conn, pg_rows, ts)
+        pg_ok = len([r for r in pg_rows if "_error" not in r])
+        log.info("  → %d PostgreSQL servers cached", pg_ok)
+    except Exception as exc:
+        err = f"PostgreSQL: {exc}"
+        log.error(err)
         errors.append(err)
 
     # Advisor
-    print("[sync] Fetching Advisor recommendations …")
+    log.info("Fetching Advisor recommendations …")
     try:
         adv_rows = advisor.fetch_all_recommendations()
         _upsert_advisor(conn, adv_rows, ts)
-        print(f"  → {len([r for r in adv_rows if '_error' not in r])} recommendations")
+        log.info("  → %d recommendations", len([r for r in adv_rows if "_error" not in r]))
     except Exception as exc:
         err = f"Advisor: {exc}"
-        print(f"  [error] {err}")
+        log.error(err)
         errors.append(err)
 
     # Backup
-    print("[sync] Fetching backup status …")
+    log.info("Fetching backup status …")
     try:
         bk_rows = backup.fetch_all_backup_status()
         _upsert_backup(conn, bk_rows, ts)
-        print(f"  → {len([r for r in bk_rows if '_error' not in r])} backup items")
+        log.info("  → %d backup items", len([r for r in bk_rows if "_error" not in r]))
     except Exception as exc:
         err = f"Backup: {exc}"
-        print(f"  [error] {err}")
+        log.error(err)
         errors.append(err)
 
     # Resource Health
-    print("[sync] Fetching resource health …")
+    log.info("Fetching resource health …")
     try:
         h_rows = health.fetch_all_resource_health()
         _upsert_health(conn, h_rows, ts)
-        print(f"  → {len([r for r in h_rows if '_error' not in r])} health records")
+        log.info("  → %d health records", len([r for r in h_rows if "_error" not in r]))
     except Exception as exc:
         err = f"Health: {exc}"
-        print(f"  [error] {err}")
+        log.error(err)
         errors.append(err)
 
     # Cost
-    print("[sync] Fetching cost data …")
+    log.info("Fetching cost data …")
     try:
         cost_rows = cost.fetch_all_costs()
         _upsert_costs(conn, cost_rows, ts)
-        print(f"  → {len([r for r in cost_rows if '_error' not in r])} daily cost rows")
+        log.info("  → %d daily cost rows", len([r for r in cost_rows if "_error" not in r]))
     except Exception as exc:
         err = f"Cost: {exc}"
-        print(f"  [error] {err}")
+        log.error(err)
         errors.append(err)
 
     # Network topology
-    print("[sync] Fetching network topology (VNets, subnets, NICs, public IPs, NSGs) …")
+    log.info("Fetching network topology (VNets, subnets, NICs, public IPs, NSGs) …")
     try:
         net_data = network.fetch_all_network()
         _upsert_network(conn, net_data, ts)
         ok_vnets = len([r for r in net_data["vnets"] if "_error" not in r])
         ok_nics  = len([r for r in net_data["nics"]  if "_error" not in r])
         ok_pips  = len([r for r in net_data["public_ips"] if "_error" not in r])
-        print(f"  → {ok_vnets} VNets, {ok_nics} NICs, {ok_pips} public IPs")
+        log.info("  → %d VNets, %d NICs, %d public IPs", ok_vnets, ok_nics, ok_pips)
     except Exception as exc:
         err = f"Network: {exc}"
-        print(f"  [error] {err}")
+        log.error(err)
+        errors.append(err)
+
+    # NSG security rules
+    log.info("Fetching NSG security rules …")
+    try:
+        nsg_rule_rows = net_data.get("nsg_rules", []) if "net_data" in dir() else network.fetch_nsg_rules()
+        _upsert_nsg_rules(conn, nsg_rule_rows, ts)
+        ok_rules = len([r for r in nsg_rule_rows if "_error" not in r])
+        log.info("  → %d NSG rules cached", ok_rules)
+    except Exception as exc:
+        err = f"NSG rules: {exc}"
+        log.error(err)
         errors.append(err)
 
     # Azure Monitor Alerts
-    print("[sync] Fetching Azure Monitor alerts …")
+    log.info("Fetching Azure Monitor alerts …")
     try:
         alert_rows = alerts_client.fetch_all_alerts()
         _upsert_alerts(conn, alert_rows, ts)
-        ok_alerts = len([r for r in alert_rows if "_error" not in r])
-        print(f"  → {ok_alerts} alert instances")
+        log.info("  → %d alert instances", len([r for r in alert_rows if "_error" not in r]))
     except Exception as exc:
         err = f"Alerts: {exc}"
-        print(f"  [error] {err}")
+        log.error(err)
         errors.append(err)
 
     status = "error" if len(errors) == total_sections else ("partial" if errors else "ok")
@@ -359,7 +427,7 @@ def run_sync():
     )
     conn.commit()
     conn.close()
-    print(f"[sync] Done — status={status}")
+    log.info("Sync done — status=%s", status)
     return status
 
 

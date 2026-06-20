@@ -200,6 +200,50 @@ def fetch_vnet_peerings() -> list[dict]:
     } for r in rows if r.get("peering_id")]
 
 
+def fetch_nsg_rules() -> list[dict]:
+    """Expand NSG security rules via Resource Graph."""
+    kql = """
+    Resources
+    | where type == 'microsoft.network/networksecuritygroups'
+    | mv-expand rule = properties.securityRules
+    | project
+        nsg_id       = id,
+        nsg_name     = name,
+        rule_name    = tostring(rule.name),
+        priority     = toint(rule.properties.priority),
+        direction    = tostring(rule.properties.direction),
+        access       = tostring(rule.properties.access),
+        protocol     = tostring(rule.properties.protocol),
+        source_prefix = tostring(rule.properties.sourceAddressPrefix),
+        source_port   = tostring(rule.properties.sourcePortRange),
+        dest_prefix   = tostring(rule.properties.destinationAddressPrefix),
+        dest_port     = tostring(rule.properties.destinationPortRange)
+    | order by nsg_name asc, direction asc, priority asc
+    """
+    rows = _query(kql)
+    result = []
+    for r in rows:
+        nsg_id = r.get("nsg_id", "")
+        rule_name = r.get("rule_name", "")
+        if not nsg_id or not rule_name:
+            continue
+        result.append({
+            "rule_id": f"{nsg_id}/{rule_name}",
+            "nsg_id": nsg_id,
+            "nsg_name": r.get("nsg_name", ""),
+            "name": rule_name,
+            "priority": r.get("priority"),
+            "direction": r.get("direction", ""),
+            "access": r.get("access", ""),
+            "protocol": r.get("protocol", ""),
+            "source_prefix": r.get("source_prefix", ""),
+            "source_port": r.get("source_port", ""),
+            "dest_prefix": r.get("dest_prefix", ""),
+            "dest_port": r.get("dest_port", ""),
+        })
+    return result
+
+
 def fetch_all_network() -> dict:
     try:
         vnets = fetch_vnets()
@@ -225,6 +269,10 @@ def fetch_all_network() -> dict:
         peerings = fetch_vnet_peerings()
     except Exception as exc:
         peerings = [{"_error": str(exc)}]
+    try:
+        nsg_rules = fetch_nsg_rules()
+    except Exception as exc:
+        nsg_rules = [{"_error": str(exc)}]
 
     return {
         "vnets": vnets,
@@ -233,4 +281,5 @@ def fetch_all_network() -> dict:
         "public_ips": public_ips,
         "nsgs": nsgs,
         "peerings": peerings,
+        "nsg_rules": nsg_rules,
     }
