@@ -322,6 +322,39 @@ CREATE TABLE IF NOT EXISTS resource_snapshots (
     synced_at       TEXT
 );
 
+-- ── Security score history ───────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS security_score_history (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_date   TEXT NOT NULL,      -- YYYY-MM-DD
+    score           INTEGER NOT NULL,
+    open_inbound    INTEGER,
+    advisor_high_sec INTEGER,
+    public_ips      INTEGER,
+    gateways_no_waf INTEGER,
+    synced_at       TEXT,
+    UNIQUE(snapshot_date)
+);
+
+-- ── Azure Reservations ───────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS reservations (
+    reservation_id      TEXT PRIMARY KEY,   -- full resource ID
+    order_id            TEXT,               -- parent reservationOrder ID
+    name                TEXT,
+    type                TEXT,               -- microsoft.compute/virtualmachines etc.
+    sku_name            TEXT,               -- Standard_D4s_v3 etc.
+    quantity            INTEGER,
+    term                TEXT,               -- P1Y | P3Y
+    scope_type          TEXT,               -- Shared | Single | ManagementGroup
+    scope               TEXT,               -- subscription or resource group
+    state               TEXT,               -- Active | Expired | Cancelled | PaymentPending
+    expiry_date         TEXT,
+    purchase_date       TEXT,
+    location            TEXT,
+    utilization_pct     REAL,
+    subscription_id     TEXT,
+    synced_at           TEXT
+);
+
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_vm_metrics_vm_metric ON vm_metrics(vm_id, metric);
 CREATE INDEX IF NOT EXISTS idx_advisor_resource    ON advisor_recs(resource_id);
@@ -343,6 +376,9 @@ CREATE INDEX IF NOT EXISTS idx_activity_rg         ON activity_log(resource_grou
 CREATE INDEX IF NOT EXISTS idx_activity_caller     ON activity_log(caller);
 CREATE INDEX IF NOT EXISTS idx_activity_status     ON activity_log(status);
 CREATE INDEX IF NOT EXISTS idx_snapshots_date      ON resource_snapshots(snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_reservations_state  ON reservations(state);
+CREATE INDEX IF NOT EXISTS idx_reservations_expiry ON reservations(expiry_date);
+CREATE INDEX IF NOT EXISTS idx_sec_score_date      ON security_score_history(snapshot_date);
 """
 
 

@@ -1497,6 +1497,98 @@ def get_snapshot_diff() -> dict:
         conn.close()
 
 
+def get_top_security_risks(limit: int = 10) -> list[dict]:
+    """Consolidated top security risks for dashboard panel."""
+    risks = []
+    conn = get_db()
+    try:
+        HIGH_RISK_PORTS = {"22": "SSH", "3389": "RDP", "445": "SMB", "23": "Telnet",
+                           "21": "FTP", "1433": "MSSQL", "3306": "MySQL", "5432": "PostgreSQL",
+                           "*": "All Ports"}
+        rows = conn.execute(
+            "SELECT nsg_name, resource_group, dest_port, name "
+            "FROM nsg_rules WHERE direction='Inbound' AND access='Allow' "
+            "AND source_prefix IN ('*','Any','Internet','0.0.0.0/0') "
+            "ORDER BY nsg_name LIMIT 20"
+        ).fetchall()
+        for r in rows:
+            port = str(r["dest_port"] or "")
+            svc = HIGH_RISK_PORTS.get(port, f"Port {port}")
+            risks.append({
+                "severity": "critical" if port in ("22", "3389", "445", "*") else "high",
+                "category": "Open Port",
+                "title": f"{svc} open from Internet",
+                "detail": f"NSG {r['nsg_name']} rule '{r['name']}'",
+                "url": f"/nsgs/{r['resource_group']}/{r['nsg_name']}",
+            })
+
+        # Public IPs attached to VMs
+        pip_rows = conn.execute(
+            "SELECT p.name, p.ip_address, v.name AS vm_name, v.resource_group "
+            "FROM public_ips p LEFT JOIN nics n ON LOWER(n.nic_id)=LOWER(p.nic_id) "
+            "LEFT JOIN vms v ON LOWER(v.vm_id)=LOWER(n.vm_id) "
+            "WHERE p.ip_address IS NOT NULL AND v.name IS NOT NULL"
+        ).fetchall()
+        for r in pip_rows:
+            risks.append({
+                "severity": "high",
+                "category": "Public Exposure",
+                "title": f"VM {r['vm_name']} has public IP",
+                "detail": f"{r['ip_address']} via {r['name']}",
+                "url": f"/vms/{r['resource_group']}/{r['vm_name']}",
+            })
+
+        # App Gateways without WAF
+        gw_rows = conn.execute(
+            "SELECT name, resource_group FROM app_gateways WHERE waf_enabled=0 OR waf_enabled IS NULL"
+        ).fetchall()
+        for r in gw_rows:
+            risks.append({
+                "severity": "high",
+                "category": "WAF",
+                "title": f"App Gateway without WAF",
+                "detail": f"{r['name']} ({r['resource_group']})",
+                "url": f"/waf/{r['resource_group']}/{r['name']}",
+            })
+
+        # High-impact Security advisor recs
+        adv_rows = conn.execute(
+            "SELECT short_description, resource_id, category FROM advisor_recs "
+            "WHERE category='Security' AND impact='High' LIMIT 5"
+        ).fetchall()
+        for r in adv_rows:
+            risks.append({
+                "severity": "high",
+                "category": "Advisor",
+                "title": (r["short_description"] or "Security recommendation")[:70],
+                "detail": "Azure Advisor — Security",
+                "url": "/advisor?category=Security",
+            })
+
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+    order = {"critical": 0, "high": 1, "medium": 2}
+    risks.sort(key=lambda x: order.get(x["severity"], 9))
+    return risks[:limit]
+
+
+def get_recent_changes_summary() -> dict:
+    """Snapshot diff summary for dashboard recent-changes panel."""
+    diff = get_snapshot_diff()
+    significant = [c for c in diff.get("changes", []) if c["delta"] != 0]
+    return {
+        "has_changes": bool(significant),
+        "latest": diff.get("latest"),
+        "previous": diff.get("previous"),
+        "added": sum(1 for c in significant if c["delta"] > 0),
+        "removed": sum(1 for c in significant if c["delta"] < 0),
+        "changes": significant[:8],
+    }
+
+
 # ── Security history / trend (from snapshots) ─────────────────────────────────
 
 def get_security_history(days: int = 14) -> list[dict]:
@@ -1592,5 +1684,128 @@ def get_cost_advisor_recs() -> list[dict]:
         return [dict(r) for r in rows]
     except Exception:
         return []
+    finally:
+        conn.close()
+
+
+# ── Security score history ─────────────────────────────────────────────────────
+
+def get_security_score_trend(days: int = 30) -> list[dict]:
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT snapshot_date, score FROM security_score_history "
+            "ORDER BY snapshot_date DESC LIMIT ?",
+            (days,),
+        ).fetchall()
+        return [dict(r) for r in reversed(rows)]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+# ── Reservations ───────────────────────────────────────────────────────────────
+
+def get_reservations(state_filter: str = None) -> list[dict]:
+    conn = get_db()
+    try:
+        sql = "SELECT * FROM reservations"
+        params: list = []
+        if state_filter:
+            sql += " WHERE state = ?"
+            params.append(state_filter)
+        sql += " ORDER BY state ASC, expiry_date ASC"
+        rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def get_reservation_summary() -> dict:
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN state='Active' THEN 1 ELSE 0 END) AS active,
+                SUM(CASE WHEN state='Expired' THEN 1 ELSE 0 END) AS expired,
+                SUM(CASE WHEN state='Cancelled' THEN 1 ELSE 0 END) AS cancelled,
+                SUM(CASE WHEN state='Active' AND expiry_date <= date('now','+30 days') THEN 1 ELSE 0 END) AS expiring_soon,
+                AVG(CASE WHEN state='Active' THEN utilization_pct END) AS avg_utilization,
+                SUM(CASE WHEN state='Active' THEN quantity ELSE 0 END) AS total_quantity
+               FROM reservations"""
+        ).fetchone()
+        return dict(row) if row else {}
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+
+
+# ── Reporting ──────────────────────────────────────────────────────────────────
+
+def get_report_data() -> dict:
+    """Aggregate data for the executive reporting page."""
+    conn = get_db()
+    try:
+        sec = calculate_security_score()
+        mtd = get_mtd_total()
+
+        vm_rows = conn.execute(
+            "SELECT name, resource_group, location, vm_size, os_type, power_state, tags FROM vms ORDER BY name"
+        ).fetchall()
+
+        open_ports = conn.execute(
+            "SELECT r.nsg_name, n.resource_group, r.name AS rule_name, r.dest_port, r.source_prefix, r.priority "
+            "FROM nsg_rules r LEFT JOIN nsgs n ON r.nsg_name = n.name "
+            "WHERE r.direction='Inbound' AND r.access='Allow' "
+            "AND r.source_prefix IN ('*','Any','Internet','0.0.0.0/0') ORDER BY r.nsg_name, r.priority"
+        ).fetchall()
+
+        advisor_high = conn.execute(
+            "SELECT category, impact, short_description, solution, resource_id "
+            "FROM advisor_recs WHERE impact IN ('High','Medium') ORDER BY impact, category LIMIT 100"
+        ).fetchall()
+
+        month_start = datetime.now(timezone.utc).strftime("%Y%m01")
+        cost_by_rg = conn.execute(
+            "SELECT resource_group, SUM(cost) AS total FROM cost_daily "
+            "WHERE date >= ? GROUP BY resource_group ORDER BY total DESC",
+            (month_start,),
+        ).fetchall()
+
+        pg_servers = conn.execute(
+            "SELECT name, resource_group, location, version, state, sku_name, storage_gb FROM postgresql_servers"
+        ).fetchall()
+
+        sql_servers = conn.execute(
+            "SELECT name, resource_group, location, state, fqdn FROM sql_servers"
+        ).fetchall()
+
+        backup_issues = conn.execute(
+            "SELECT vm_name, vault_name, last_backup_status, last_backup_time, resource_group "
+            "FROM backup_status WHERE last_backup_status NOT IN ('Completed','IRPending') ORDER BY last_backup_time"
+        ).fetchall()
+
+        last_sync = last_sync_info()
+
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "last_sync": last_sync,
+            "security_score": sec,
+            "mtd_cost": mtd,
+            "vms": [dict(r) for r in vm_rows],
+            "open_ports": [dict(r) for r in open_ports],
+            "advisor_high": [dict(r) for r in advisor_high],
+            "cost_by_rg": [dict(r) for r in cost_by_rg],
+            "pg_servers": [dict(r) for r in pg_servers],
+            "sql_servers": [dict(r) for r in sql_servers],
+            "backup_issues": [dict(r) for r in backup_issues],
+        }
+    except Exception:
+        return {}
     finally:
         conn.close()

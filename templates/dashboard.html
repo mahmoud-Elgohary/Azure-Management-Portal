@@ -169,19 +169,34 @@
 <!-- ── Row 3: Charts ──────────────────────────────────────────────────── -->
 <div class="row g-3 mb-3">
 
-  <div class="col-lg-8">
+  <div class="col-lg-6">
     <div class="card h-100">
       <div class="card-header d-flex align-items-center">
         <i class="bi bi-graph-up me-2 text-primary"></i>Cost Trend
         <a href="{{ url_for('cost_view') }}" class="btn btn-sm btn-link ms-auto">Full report</a>
       </div>
       <div class="card-body">
-        <div style="height:200px"><canvas id="chart-cost"></canvas></div>
+        <div style="height:180px"><canvas id="chart-cost"></canvas></div>
       </div>
     </div>
   </div>
 
-  <div class="col-lg-4">
+  <div class="col-lg-3">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-shield-half me-2 text-warning"></i>Security Score Trend
+        <a href="{{ url_for('security_view') }}" class="btn btn-sm btn-link ms-auto">Details</a>
+      </div>
+      <div class="card-body">
+        <div style="height:180px"><canvas id="chart-security"></canvas></div>
+        <div id="security-chart-empty" class="text-center text-muted small mt-2" style="display:none">
+          Score tracked each sync. Run a sync to start.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-3">
     <div class="card h-100">
       <div class="card-header d-flex align-items-center">
         <i class="bi bi-pie-chart me-2 text-primary"></i>Resource Inventory
@@ -295,59 +310,93 @@
     </div>
   </div>
 
-  <!-- Advisor by category -->
+  <!-- Top Security Risks -->
   <div class="col-lg-6">
-    <div class="card">
+    <div class="card h-100">
       <div class="card-header d-flex align-items-center">
-        <i class="bi bi-lightbulb me-2 text-warning"></i>Advisor Recommendations
-        <a href="{{ url_for('advisor_view') }}" class="btn btn-sm btn-link ms-auto">View all</a>
+        <i class="bi bi-shield-exclamation me-2 text-danger"></i>Top Security Risks
+        <a href="{{ url_for('security_view') }}" class="btn btn-sm btn-link ms-auto">Full report</a>
       </div>
-      <div class="card-body">
-        {% if advisor_cats %}
-        <div class="d-flex flex-wrap gap-3">
-          {% for cat, cnt in advisor_cats.items() | sort %}
-          <a href="{{ url_for('advisor_view', category=cat) }}" class="text-decoration-none text-center">
-            <div class="kpi-value mb-0" style="font-size:1.6rem">{{ cnt }}</div>
-            <span class="badge
-              {% if cat == 'Cost' %}bg-warning text-dark
-              {% elif cat == 'Security' %}bg-danger
-              {% elif cat == 'Reliability' %}bg-primary
-              {% elif cat == 'Performance' %}bg-info text-dark
-              {% else %}bg-secondary{% endif %}">{{ cat }}</span>
-          </a>
-          {% endfor %}
+      <div class="card-body p-0">
+        {% if top_risks %}
+        <div style="max-height:260px;overflow-y:auto">
+          <table class="table table-sm mb-0">
+            <tbody>
+              {% for risk in top_risks %}
+              <tr>
+                <td style="width:10px" class="pe-0">
+                  <span class="d-block rounded" style="width:5px;height:100%;min-height:24px;background:{% if risk.severity == 'critical' %}#dc2626{% else %}#f59e0b{% endif %}"></span>
+                </td>
+                <td>
+                  <div class="fw-500 small">{{ risk.title }}</div>
+                  <div class="text-muted" style="font-size:.75rem">
+                    <span class="badge {% if risk.severity == 'critical' %}bg-danger{% else %}bg-warning text-dark{% endif %} me-1" style="font-size:.65rem">{{ risk.severity }}</span>
+                    {{ risk.category }} · {{ risk.detail[:60] }}
+                  </div>
+                </td>
+                <td class="text-end pe-2">
+                  <a href="{{ risk.url }}" class="btn btn-sm btn-link p-0 text-muted">
+                    <i class="bi bi-arrow-right-circle"></i>
+                  </a>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
         {% else %}
-        <div class="text-muted small">No Advisor data. Run a sync.</div>
+        <div class="p-3 text-center text-success small">
+          <i class="bi bi-shield-check fs-3 d-block mb-1"></i>No critical risks detected
+        </div>
         {% endif %}
       </div>
     </div>
   </div>
 
-  <!-- Resource health summary -->
+  <!-- Recent Changes -->
   <div class="col-lg-6">
-    <div class="card">
+    <div class="card h-100">
       <div class="card-header d-flex align-items-center">
-        <i class="bi bi-heart-pulse me-2 text-danger"></i>Resource Health
-        <a href="{{ url_for('health_view') }}" class="btn btn-sm btn-link ms-auto">View all</a>
+        <i class="bi bi-arrow-left-right me-2 text-primary"></i>Recent Changes
+        <a href="{{ url_for('changes_view') }}" class="btn btn-sm btn-link ms-auto">Full history</a>
       </div>
-      <div class="card-body">
-        {% if health_summary %}
-        <div class="d-flex flex-wrap gap-3">
-          {% for state, cnt in health_summary.items() %}
-          <a href="{{ url_for('health_view', state=state) }}" class="text-decoration-none text-center">
-            <div class="kpi-value mb-0" style="font-size:1.6rem
-              {% if state == 'Unavailable' %};color:#dc2626
-              {% elif state == 'Available' %};color:#059669{% endif %}">{{ cnt }}</div>
-            <span class="badge
-              {% if state == 'Available' %}bg-success
-              {% elif state == 'Unavailable' %}bg-danger
-              {% else %}bg-warning text-dark{% endif %}">{{ state }}</span>
-          </a>
-          {% endfor %}
+      <div class="card-body p-0">
+        {% set rc = recent_changes or {} %}
+        {% if rc.get('has_changes') %}
+        <div class="d-flex gap-2 px-3 py-2 border-bottom">
+          {% if rc.added %}<span class="badge bg-success">+{{ rc.added }} added</span>{% endif %}
+          {% if rc.removed %}<span class="badge bg-danger">{{ rc.removed }} removed</span>{% endif %}
+          <small class="text-muted ms-auto">{{ rc.previous }} → {{ rc.latest }}</small>
+        </div>
+        <table class="table table-sm mb-0">
+          <tbody>
+            {% for c in rc.get('changes', []) %}
+            <tr>
+              <td>
+                <i class="bi {% if c.delta > 0 %}bi-plus-circle text-success{% else %}bi-dash-circle text-danger{% endif %} me-1"></i>
+                <small>{{ c.type }}</small>
+              </td>
+              <td class="text-muted small text-center">{{ c.previous }}</td>
+              <td class="text-center">
+                <span class="{% if c.delta > 0 %}text-success{% else %}text-danger{% endif %} fw-500 small">
+                  {{ '+' if c.delta > 0 else '' }}{{ c.delta }}
+                </span>
+              </td>
+              <td class="fw-500 small text-end pe-3">{{ c.current }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% elif rc.get('latest') %}
+        <div class="p-3 text-muted small text-center">
+          <i class="bi bi-check-circle text-success d-block fs-3 mb-1"></i>
+          No resource count changes since last sync<br>
+          <small>Snapshot: {{ rc.latest }}</small>
         </div>
         {% else %}
-        <div class="text-muted small">No health data. Run a sync.</div>
+        <div class="p-3 text-muted small text-center">
+          No snapshots yet. Run a sync to start tracking.
+        </div>
         {% endif %}
       </div>
     </div>
@@ -391,6 +440,45 @@
       }
     });
   } catch(e) { console.warn('Dashboard cost chart failed:', e); }
+})();
+
+/* Security score trend chart */
+(async function() {
+  try {
+    const r = await fetch('/api/security/trend?days=30');
+    const trend = await r.json();
+    if (!trend.length) {
+      document.getElementById('security-chart-empty').style.display = '';
+      return;
+    }
+    const labels = trend.map(d => d.snapshot_date);
+    const values = trend.map(d => d.score);
+    const secColor = values[values.length - 1] >= 80 ? '#16a34a'
+                   : values[values.length - 1] >= 60 ? '#d97706' : '#dc2626';
+    new Chart(document.getElementById('chart-security'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Security Score',
+          data: values,
+          borderColor: secColor,
+          backgroundColor: secColor + '15',
+          fill: true,
+          tension: 0.3,
+          pointRadius: labels.length > 20 ? 0 : 3,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { maxTicksLimit: 6, font: { size: 9 } } },
+          y: { min: 0, max: 100, ticks: { font: { size: 9 }, callback: v => v + '/100' } }
+        }
+      }
+    });
+  } catch(e) { console.warn('Security trend chart failed:', e); }
 })();
 </script>
 {% endblock %}

@@ -117,6 +117,16 @@
       <i class="bi bi-collection"></i> Resources
     </a>
 
+    <a href="{{ url_for('report_view') }}"
+       class="{% if request.endpoint in ('report_view','api_report_csv','api_report_json') %}active{% endif %}">
+      <i class="bi bi-file-earmark-bar-graph"></i> Report
+    </a>
+
+    <a href="{{ url_for('reservations_view') }}"
+       class="{% if request.endpoint == 'reservations_view' %}active{% endif %}">
+      <i class="bi bi-bookmark-check"></i> Reservations
+    </a>
+
     <div class="nav-section-label">Network</div>
 
     <a href="{{ url_for('topology_view') }}"

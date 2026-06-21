@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block title %}Reservations — WTS Azure Manager{% endblock %}
+{% block page_title %}Azure Reservations{% endblock %}
+
+{% block content %}
+
+{% set sm = summary or {} %}
+
+<!-- KPI row -->
+<div class="row g-3 mb-3">
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card {% if sm.total %}kpi-link{% endif %}" onclick="filterState('')" style="cursor:pointer">
+      <div class="kpi-value text-primary">{{ sm.total or 0 }}</div>
+      <div class="kpi-label">Total Reservations</div>
+      <div class="kpi-sub">All states</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card {% if sm.active %}kpi-link{% endif %}" onclick="filterState('Active')" style="cursor:pointer">
+      <div class="kpi-value text-success">{{ sm.active or 0 }}</div>
+      <div class="kpi-label">Active</div>
+      <div class="kpi-sub">{{ sm.total_quantity or 0 }} total instances</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card {% if sm.expiring_soon %}kpi-link{% endif %}" onclick="filterState('Active')" style="cursor:pointer">
+      <div class="kpi-value {% if sm.expiring_soon %}text-warning{% else %}text-success{% endif %}">
+        {{ sm.expiring_soon or 0 }}
+      </div>
+      <div class="kpi-label">Expiring in 30 days</div>
+      <div class="kpi-sub">{% if sm.expiring_soon %}Action required{% else %}No upcoming expirations{% endif %}</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value {% if sm.avg_utilization and sm.avg_utilization < 60 %}text-danger{% elif sm.avg_utilization %}text-success{% else %}text-muted{% endif %}">
+        {% if sm.avg_utilization %}{{ "%.0f"|format(sm.avg_utilization) }}%{% else %}—{% endif %}
+      </div>
+      <div class="kpi-label">Avg Utilisation</div>
+      <div class="kpi-sub">Active reservations</div>
+    </div>
+  </div>
+</div>
+
+{% if sm.expiring_soon %}
+<div class="alert alert-warning d-flex align-items-center gap-2 mb-3">
+  <i class="bi bi-exclamation-triangle-fill fs-5"></i>
+  <div>
+    <strong>{{ sm.expiring_soon }} reservation{{ 's' if sm.expiring_soon > 1 else '' }}</strong>
+    expire within 30 days. Review and renew to avoid losing discounts.
+  </div>
+</div>
+{% endif %}
+
+<!-- Filter pills + KQL buttons -->
+<div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+  <strong class="text-muted small me-1">Filter:</strong>
+  <a href="{{ url_for('reservations_view') }}"
+     class="btn btn-sm {% if not selected_state %}btn-primary{% else %}btn-outline-secondary{% endif %}">
+    All ({{ sm.total or 0 }})
+  </a>
+  <a href="{{ url_for('reservations_view', state='Active') }}"
+     class="btn btn-sm {% if selected_state == 'Active' %}btn-success{% else %}btn-outline-success{% endif %}">
+    Active ({{ sm.active or 0 }})
+  </a>
+  <a href="{{ url_for('reservations_view', state='Expired') }}"
+     class="btn btn-sm {% if selected_state == 'Expired' %}btn-danger{% else %}btn-outline-danger{% endif %}">
+    Expired ({{ sm.expired or 0 }})
+  </a>
+  <a href="{{ url_for('reservations_view', state='Cancelled') }}"
+     class="btn btn-sm {% if selected_state == 'Cancelled' %}btn-secondary{% else %}btn-outline-secondary{% endif %}">
+    Cancelled ({{ sm.cancelled or 0 }})
+  </a>
+  <div class="ms-auto d-flex gap-2">
+    <button class="btn btn-sm btn-outline-secondary" onclick="openKql(kqlUtil)">
+      <i class="bi bi-bar-chart me-1"></i>Utilisation KQL
+    </button>
+    <button class="btn btn-sm btn-outline-secondary" onclick="openKql(kqlExpiry)">
+      <i class="bi bi-calendar-x me-1"></i>Expiry KQL
+    </button>
+  </div>
+</div>
+
+{% if items %}
+<div class="card">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0" id="res-table">
+        <thead class="table-light sticky-top">
+          <tr>
+            <th>Name / SKU</th>
+            <th>Type</th>
+            <th>Scope</th>
+            <th class="text-center">Qty</th>
+            <th>Term</th>
+            <th>Utilisation</th>
+            <th>Expiry</th>
+            <th>State</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in items %}
+          {% set days_left = none %}
+          <tr class="{% if r.state == 'Expired' %}table-secondary{% elif r.state == 'Cancelled' %}table-secondary{% endif %}">
+            <td>
+              <div class="fw-500 small">{{ r.name or r.sku_name or '—' }}</div>
+              <div class="text-muted" style="font-size:.75rem"><code>{{ r.sku_name or '—' }}</code></div>
+            </td>
+            <td>
+              <small class="text-muted">
+                {% set t = (r.type or '').split('/')[-1] if r.type else '' %}
+                {{ t or '—' }}
+              </small>
+            </td>
+            <td>
+              <span class="badge bg-secondary bg-opacity-25 text-secondary" style="font-size:.7rem">
+                {{ r.scope_type or '—' }}
+              </span>
+              {% if r.scope and r.scope_type != 'Shared' %}
+              <div style="font-size:.7rem" class="text-muted text-truncate" style="max-width:140px">
+                {{ r.scope.split('/')[-1] if '/' in (r.scope or '') else r.scope }}
+              </div>
+              {% endif %}
+            </td>
+            <td class="text-center fw-500">{{ r.quantity or '—' }}</td>
+            <td>
+              <span class="badge {% if r.term == 'P3Y' %}bg-primary{% else %}bg-info text-dark{% endif %}" style="font-size:.7rem">
+                {% if r.term == 'P3Y' %}3 Year{% elif r.term == 'P1Y' %}1 Year{% else %}{{ r.term or '—' }}{% endif %}
+              </span>
+            </td>
+            <td style="min-width:120px">
+              {% if r.utilization_pct is not none %}
+              {% set u = r.utilization_pct | float %}
+              <div class="d-flex align-items-center gap-2">
+                <div class="progress flex-grow-1" style="height:6px">
+                  <div class="progress-bar {% if u < 60 %}bg-danger{% elif u < 85 %}bg-warning{% else %}bg-success{% endif %}"
+                       style="width:{{ [u,100]|min }}%"></div>
+                </div>
+                <small class="text-nowrap {% if u < 60 %}text-danger{% elif u < 85 %}text-warning{% else %}text-success{% endif %}">
+                  {{ "%.0f"|format(u) }}%
+                </small>
+              </div>
+              {% else %}
+              <span class="text-muted small">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if r.expiry_date %}
+              <small class="{% if r.state == 'Active' and r.expiry_date <= (now_date or '2099') %}text-warning fw-500{% else %}text-muted{% endif %}">
+                {{ r.expiry_date[:10] }}
+              </small>
+              {% else %}—{% endif %}
+            </td>
+            <td>
+              <span class="badge {% if r.state == 'Active' %}bg-success{% elif r.state == 'Expired' %}bg-danger{% elif r.state == 'Cancelled' %}bg-secondary{% else %}bg-warning text-dark{% endif %}" style="font-size:.7rem">
+                {{ r.state or '—' }}
+              </span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card-footer text-muted small">
+    {{ items | length }} reservation{{ 's' if items|length != 1 else '' }}
+    {% if selected_state %} · filtered: {{ selected_state }}{% endif %}
+  </div>
+</div>
+{% elif sm.total == 0 or sm.total is none %}
+<div class="card">
+  <div class="card-body text-center py-5">
+    <i class="bi bi-bookmark-dash fs-1 text-muted d-block mb-3"></i>
+    <h5 class="text-muted">No reservation data</h5>
+    <p class="text-muted small mb-4">
+      Reservations are synced via Azure Resource Graph (<code>reservationresources</code> table).<br>
+      This requires the service principal to have <strong>Reservations Reader</strong> role on
+      the billing account or tenant root.
+    </p>
+    <div class="d-flex gap-2 justify-content-center flex-wrap">
+      <button class="btn btn-outline-primary" onclick="openKql(kqlUtil)">
+        <i class="bi bi-terminal me-1"></i>Query Reservation Utilisation via KQL
+      </button>
+      <button class="btn btn-outline-secondary" onclick="openKql(kqlExpiry)">
+        <i class="bi bi-calendar-x me-1"></i>Query Expiring Reservations via KQL
+      </button>
+    </div>
+    <div class="mt-4 p-3 bg-light rounded text-start small">
+      <strong>To enable reservation data:</strong><br>
+      Run this AZ CLI command to grant the Reader role:
+      <pre class="mt-2 mb-0"><code>az role assignment create \
+  --role "Reservations Reader" \
+  --assignee &lt;CLIENT_ID&gt; \
+  --scope /providers/Microsoft.Capacity</code></pre>
+    </div>
+  </div>
+</div>
+{% else %}
+<div class="p-4 text-muted text-center">No reservations match the current filter.</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const kqlUtil = `reservationresources\n| where type == "microsoft.capacity/reservationorders/reservations"\n| extend props = properties\n| project\n    name,\n    sku = tostring(sku.name),\n    state = tostring(props.provisioningState),\n    quantity = toint(props.quantity),\n    term = tostring(props.term),\n    utilization = todouble(props.utilization.aggregates[0].value),\n    expiry = tostring(props.expiryDate)\n| order by utilization asc`;
+
+const kqlExpiry = `reservationresources\n| where type == "microsoft.capacity/reservationorders/reservations"\n| extend props = properties\n| where props.provisioningState == "Succeeded"\n| extend expiryDate = todatetime(props.expiryDate)\n| where expiryDate between (now() .. now()+60d)\n| project name, sku = tostring(sku.name), expiryDate, quantity = toint(props.quantity)\n| order by expiryDate asc`;
+
+function openKql(query) {
+  sessionStorage.setItem('kql_prefill', query);
+  location.href = '{{ url_for("kql_console") }}';
+}
+
+function filterState(state) {
+  const url = new URL(location.href);
+  if (state) url.searchParams.set('state', state);
+  else url.searchParams.delete('state');
+  location.href = url.toString();
+}
+</script>
+{% endblock %}

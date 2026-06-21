@@ -1,0 +1,400 @@
+{% extends "base.html" %}
+{% block title %}Executive Report — WTS Azure Manager{% endblock %}
+{% block page_title %}Executive Report{% endblock %}
+
+{% block content %}
+
+{% set sec = score or {} %}
+{% set sec_score = sec.score | default(0) | int %}
+{% set vms = data.get('vms', []) %}
+{% set open_ports = data.get('open_ports', []) %}
+{% set advisor_high = data.get('advisor_high', []) %}
+{% set backup_issues = data.get('backup_issues', []) %}
+{% set pg_servers = data.get('pg_servers', []) %}
+{% set sql_servers = data.get('sql_servers', []) %}
+
+<!-- Header + download bar -->
+<div class="d-flex align-items-center justify-content-between mb-4 flex-wrap gap-2">
+  <div>
+    <p class="text-muted small mb-0">
+      <i class="bi bi-calendar me-1"></i>Generated: {{ (data.get('generated_at') or '')[:19].replace('T',' ') }} UTC
+      &nbsp;·&nbsp;
+      <i class="bi bi-arrow-repeat me-1"></i>Last sync: {{ (data.get('last_sync', {}).synced_at or 'never')[:19].replace('T',' ') }} UTC
+    </p>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <div class="dropdown">
+      <button class="btn btn-sm btn-outline-success dropdown-toggle" data-bs-toggle="dropdown">
+        <i class="bi bi-download me-1"></i>Download CSV
+      </button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><a class="dropdown-item" href="{{ url_for('api_report_csv', section='vms') }}"><i class="bi bi-server me-1"></i>VM Inventory</a></li>
+        <li><a class="dropdown-item" href="{{ url_for('api_report_csv', section='open_ports') }}"><i class="bi bi-shield-exclamation me-1"></i>Open Ports</a></li>
+        <li><a class="dropdown-item" href="{{ url_for('api_report_csv', section='advisor') }}"><i class="bi bi-lightbulb me-1"></i>Advisor Findings</a></li>
+        <li><a class="dropdown-item" href="{{ url_for('api_report_csv', section='cost') }}"><i class="bi bi-currency-euro me-1"></i>Cost by RG</a></li>
+        <li><a class="dropdown-item" href="{{ url_for('api_report_csv', section='postgresql') }}"><i class="bi bi-database-fill-gear me-1"></i>PostgreSQL Servers</a></li>
+        <li><a class="dropdown-item" href="{{ url_for('api_report_csv', section='sql') }}"><i class="bi bi-database me-1"></i>SQL Servers</a></li>
+        <li><a class="dropdown-item" href="{{ url_for('api_report_csv', section='backup') }}"><i class="bi bi-shield-x me-1"></i>Backup Issues</a></li>
+        <li><hr class="dropdown-divider"></li>
+        <li><a class="dropdown-item" href="{{ url_for('api_report_json') }}"><i class="bi bi-filetype-json me-1"></i>Full JSON Export</a></li>
+      </ul>
+    </div>
+    <button class="btn btn-sm btn-outline-secondary" onclick="window.print()">
+      <i class="bi bi-printer me-1"></i>Print / PDF
+    </button>
+  </div>
+</div>
+
+<!-- Executive Summary KPIs -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card border-2" style="border-color:{{ sec.color or '#6b7280' }}40 !important">
+      <i class="bi bi-shield-exclamation kpi-icon"></i>
+      <div class="kpi-value" style="color:{{ sec.color or '#6b7280' }}">
+        {{ sec_score }}<small style="font-size:.8rem">/100</small>
+      </div>
+      <div class="kpi-label">Security Score</div>
+      <div class="kpi-sub">
+        <span class="badge" style="background:{{ (sec.color or '#888') }}20;color:{{ sec.color or '#888' }};border:1px solid {{ (sec.color or '#888') }}40">
+          Grade {{ sec.grade or '?' }}
+        </span>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <i class="bi bi-currency-euro kpi-icon"></i>
+      <div class="kpi-value text-success">€{{ "%.0f"|format(mtd or 0) }}</div>
+      <div class="kpi-label">Month-to-Date Cost</div>
+      <div class="kpi-sub">
+        {% if mtd and budget %}
+          {% set pct = ((mtd / budget) * 100) | int %}
+          <span class="badge {% if pct > 90 %}bg-danger{% elif pct > 70 %}bg-warning text-dark{% else %}bg-success{% endif %}">{{ pct }}% of €{{ "%.0f"|format(budget) }}</span>
+        {% else %}Current month{% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <i class="bi bi-server kpi-icon"></i>
+      <div class="kpi-value text-primary">{{ vms | length }}</div>
+      <div class="kpi-label">Virtual Machines</div>
+      <div class="kpi-sub">
+        {% set running = vms | selectattr('power_state', 'equalto', 'running') | list | length %}
+        <span class="badge bg-success bg-opacity-15 text-success border border-success border-opacity-25">{{ running }} running</span>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <i class="bi bi-exclamation-triangle kpi-icon"></i>
+      <div class="kpi-value {% if open_ports %}text-danger{% else %}text-success{% endif %}">
+        {{ open_ports | length }}
+      </div>
+      <div class="kpi-label">Open Port Exposures</div>
+      <div class="kpi-sub">Inbound from Internet</div>
+    </div>
+  </div>
+</div>
+
+<!-- Security Risk Summary -->
+{% if open_ports or advisor_high or backup_issues %}
+<div class="card mb-4">
+  <div class="card-header bg-danger bg-opacity-10 border-danger border-opacity-25">
+    <i class="bi bi-shield-exclamation text-danger me-2"></i>
+    <strong>Security & Compliance Findings</strong>
+    <span class="badge bg-danger ms-2">{{ open_ports | length + backup_issues | length }} issues</span>
+  </div>
+  <div class="card-body p-0">
+
+    {% if open_ports %}
+    <div class="px-3 pt-3 pb-1">
+      <h6 class="text-danger"><i class="bi bi-door-open me-1"></i>Open Port Exposures ({{ open_ports | length }})</h6>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-light">
+          <tr><th>NSG</th><th>Resource Group</th><th>Rule</th><th>Port</th><th>Source</th><th>Priority</th></tr>
+        </thead>
+        <tbody>
+          {% for r in open_ports %}
+          <tr class="{% if r.dest_port in ('22','3389','445','*') %}table-danger{% else %}table-warning{% endif %}">
+            <td>
+              <a href="{{ url_for('nsg_detail', resource_group=r.resource_group, nsg_name=r.nsg_name) }}" class="text-decoration-none fw-500">
+                {{ r.nsg_name }}
+              </a>
+            </td>
+            <td><small>{{ r.resource_group }}</small></td>
+            <td><small>{{ r.rule_name }}</small></td>
+            <td><strong>{{ r.dest_port or '*' }}</strong></td>
+            <td><code>{{ r.source_prefix }}</code></td>
+            <td><small>{{ r.priority }}</small></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% if backup_issues %}
+    <div class="px-3 pt-3 pb-1 {% if open_ports %}border-top{% endif %}">
+      <h6 class="text-warning"><i class="bi bi-shield-x me-1"></i>Backup Issues ({{ backup_issues | length }})</h6>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-light">
+          <tr><th>VM</th><th>Resource Group</th><th>Vault</th><th>Status</th><th>Last Backup</th></tr>
+        </thead>
+        <tbody>
+          {% for b in backup_issues %}
+          <tr class="table-warning">
+            <td class="fw-500">{{ b.vm_name or '—' }}</td>
+            <td><small>{{ b.resource_group or '—' }}</small></td>
+            <td><small>{{ b.vault_name or '—' }}</small></td>
+            <td><span class="badge bg-danger">{{ b.last_backup_status or 'Unknown' }}</span></td>
+            <td><small>{{ (b.last_backup_time or '—')[:19].replace('T',' ') }}</small></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+{% endif %}
+
+<!-- VM Inventory -->
+<div class="card mb-4">
+  <div class="card-header d-flex align-items-center">
+    <i class="bi bi-server me-2 text-primary"></i>VM Inventory ({{ vms | length }})
+    <a href="{{ url_for('api_report_csv', section='vms') }}" class="btn btn-sm btn-outline-secondary ms-auto">
+      <i class="bi bi-download me-1"></i>CSV
+    </a>
+  </div>
+  <div class="card-body p-0">
+    {% if vms %}
+    <div class="table-responsive" style="max-height:400px;overflow-y:auto">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-dark sticky-top">
+          <tr><th>Name</th><th>Resource Group</th><th>Location</th><th>Size</th><th>OS</th><th>State</th></tr>
+        </thead>
+        <tbody>
+          {% for vm in vms %}
+          <tr>
+            <td>
+              <a href="{{ url_for('vm_detail', resource_group=vm.resource_group, vm_name=vm.name) }}" class="text-decoration-none fw-500">
+                {{ vm.name }}
+              </a>
+            </td>
+            <td><small>{{ vm.resource_group }}</small></td>
+            <td><small>{{ vm.location }}</small></td>
+            <td><code style="font-size:.75rem">{{ vm.vm_size or '—' }}</code></td>
+            <td><small>{{ vm.os_type or '—' }}</small></td>
+            <td>
+              <span class="badge {% if vm.power_state == 'running' %}bg-success{% elif vm.power_state in ('deallocated','stopped') %}bg-secondary{% else %}bg-warning text-dark{% endif %}">
+                {{ vm.power_state }}
+              </span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="p-3 text-muted small text-center">No VM data. Run a sync.</div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Cost by Resource Group -->
+<div class="row g-3 mb-4">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-currency-euro me-2 text-warning"></i>MTD Cost by Resource Group
+        <a href="{{ url_for('api_report_csv', section='cost') }}" class="btn btn-sm btn-outline-secondary ms-auto">
+          <i class="bi bi-download me-1"></i>CSV
+        </a>
+      </div>
+      <div class="card-body p-0">
+        {% if cost_by_rg %}
+        <table class="table table-sm mb-0">
+          <thead class="table-light"><tr><th>Resource Group</th><th class="text-end">MTD Cost</th></tr></thead>
+          <tbody>
+            {% for r in cost_by_rg %}
+            <tr>
+              <td><small>{{ r.resource_group or '(unassigned)' }}</small></td>
+              <td class="text-end fw-500">€{{ "%.2f"|format(r.total or 0) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="p-3 text-muted small text-center">No cost data.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Advisor High / Medium findings -->
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-lightbulb me-2 text-warning"></i>Advisor Findings (High/Medium)
+        <a href="{{ url_for('api_report_csv', section='advisor') }}" class="btn btn-sm btn-outline-secondary ms-auto">
+          <i class="bi bi-download me-1"></i>CSV
+        </a>
+      </div>
+      <div class="card-body p-0">
+        {% if advisor_high %}
+        <div style="max-height:300px;overflow-y:auto">
+          <table class="table table-sm mb-0">
+            <thead class="table-light sticky-top">
+              <tr><th>Category</th><th>Impact</th><th>Finding</th></tr>
+            </thead>
+            <tbody>
+              {% for r in advisor_high %}
+              <tr>
+                <td><span class="badge {% if r.category == 'Security' %}bg-danger{% elif r.category == 'Cost' %}bg-warning text-dark{% elif r.category == 'Reliability' %}bg-primary{% else %}bg-info text-dark{% endif %}" style="font-size:.68rem">{{ r.category }}</span></td>
+                <td><span class="badge {% if r.impact == 'High' %}bg-danger{% else %}bg-warning text-dark{% endif %}" style="font-size:.68rem">{{ r.impact }}</span></td>
+                <td><small>{{ (r.short_description or '—')[:80] }}</small></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="p-3 text-muted small text-center">No high/medium Advisor findings.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Database servers -->
+<div class="row g-3 mb-4">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-database-fill-gear me-2 text-primary"></i>PostgreSQL Servers ({{ pg_servers | length }})
+        <a href="{{ url_for('api_report_csv', section='postgresql') }}" class="btn btn-sm btn-outline-secondary ms-auto">
+          <i class="bi bi-download me-1"></i>CSV
+        </a>
+      </div>
+      <div class="card-body p-0">
+        {% if pg_servers %}
+        <table class="table table-sm mb-0">
+          <thead class="table-light">
+            <tr><th>Name</th><th>Version</th><th>SKU</th><th>State</th><th>Storage</th></tr>
+          </thead>
+          <tbody>
+            {% for s in pg_servers %}
+            <tr>
+              <td>
+                <a href="{{ url_for('postgresql_detail', resource_group=s.resource_group, server_name=s.name) }}" class="text-decoration-none fw-500">
+                  {{ s.name }}
+                </a>
+              </td>
+              <td><small>{{ s.version or '—' }}</small></td>
+              <td><small>{{ s.sku_name or '—' }}</small></td>
+              <td><span class="badge {% if s.state == 'Ready' %}bg-success{% else %}bg-secondary{% endif %}" style="font-size:.68rem">{{ s.state or '—' }}</span></td>
+              <td><small>{{ s.storage_gb or '—' }} GB</small></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="p-3 text-muted small text-center">No PostgreSQL servers.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-database me-2 text-success"></i>SQL Servers ({{ sql_servers | length }})
+        <a href="{{ url_for('api_report_csv', section='sql') }}" class="btn btn-sm btn-outline-secondary ms-auto">
+          <i class="bi bi-download me-1"></i>CSV
+        </a>
+      </div>
+      <div class="card-body p-0">
+        {% if sql_servers %}
+        <table class="table table-sm mb-0">
+          <thead class="table-light">
+            <tr><th>Name</th><th>Resource Group</th><th>Location</th><th>State</th></tr>
+          </thead>
+          <tbody>
+            {% for s in sql_servers %}
+            <tr>
+              <td>
+                <a href="{{ url_for('sql_detail', resource_group=s.resource_group, server_name=s.name) }}" class="text-decoration-none fw-500">
+                  {{ s.name }}
+                </a>
+              </td>
+              <td><small>{{ s.resource_group }}</small></td>
+              <td><small>{{ s.location }}</small></td>
+              <td><span class="badge {% if s.state == 'Ready' %}bg-success{% else %}bg-secondary{% endif %}" style="font-size:.68rem">{{ s.state or '—' }}</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="p-3 text-muted small text-center">No SQL servers.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Score breakdown -->
+<div class="card mb-4">
+  <div class="card-header"><i class="bi bi-shield-check me-2"></i>Security Score Breakdown</div>
+  <div class="card-body">
+    <div class="row g-3 align-items-center">
+      <div class="col-auto text-center">
+        <div style="font-size:3rem;font-weight:700;color:{{ sec.color or '#888' }}">{{ sec_score }}</div>
+        <div class="text-muted small">out of 100</div>
+        <div class="badge mt-1 fs-6" style="background:{{ (sec.color or '#888') }}20;color:{{ sec.color or '#888' }};border:1px solid {{ (sec.color or '#888') }}40">Grade {{ sec.grade or '?' }}</div>
+      </div>
+      <div class="col">
+        {% set pen = sec.get('penalties', {}) %}
+        {% for factor, label, max_pen in [
+          ('open_inbound', 'Open inbound NSG rules', 30),
+          ('advisor_security', 'High-impact Security Advisor recs', 25),
+          ('public_ips', 'Public IP addresses', 20),
+          ('gateways_no_waf', 'App Gateways without WAF', 15),
+        ] %}
+        {% set deducted = pen.get(factor, 0) %}
+        <div class="mb-2">
+          <div class="d-flex justify-content-between small mb-1">
+            <span>{{ label }}
+              <span class="text-muted">({{ sec.get(factor, 0) }} found)</span>
+            </span>
+            <span class="{% if deducted > 0 %}text-danger{% else %}text-success{% endif %} fw-500">
+              {% if deducted > 0 %}-{{ deducted }}{% else %}✓ 0{% endif %}
+            </span>
+          </div>
+          <div class="progress" style="height:6px">
+            <div class="progress-bar {% if deducted > 0 %}bg-danger{% else %}bg-success{% endif %}"
+                 style="width:{{ (deducted / max_pen * 100) | int if max_pen else 0 }}%"></div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block head %}
+<style>
+@media print {
+  #sidebar, .sidebar-footer, nav.navbar, .btn, form { display: none !important; }
+  .card { break-inside: avoid; }
+  body { font-size: 11px; }
+}
+</style>
+{% endblock %}

@@ -547,9 +547,53 @@ def run_sync():
         _upsert_generic_resources(conn, generic_rows, ts)
         log.info("  → %d generic resources (Storage/KV/VPN/Bastion/etc.) cached", len(generic_rows))
     except Exception as exc:
-        err = f"GenericResources: {exc}"
-        log.warning(err)
-        # non-fatal — don't append to errors
+        log.warning("GenericResources: %s", exc)
+        # non-fatal
+
+    # Reservations via Resource Graph
+    log.info("Fetching Azure Reservations …")
+    try:
+        res_rows = resource_graph.fetch_reservations()
+        for r in res_rows:
+            if not r.get("reservation_id"):
+                continue
+            conn.execute(
+                """INSERT INTO reservations
+                   (reservation_id,order_id,name,sku_name,quantity,term,scope_type,scope,
+                    state,expiry_date,purchase_date,location,utilization_pct,subscription_id,synced_at)
+                   VALUES (:reservation_id,:order_id,:name,:sku_name,:quantity,:term,:scope_type,:scope,
+                    :state,:expiry_date,:purchase_date,:location,:utilization_pct,:subscription_id,:synced_at)
+                   ON CONFLICT(reservation_id) DO UPDATE SET
+                    state=excluded.state, utilization_pct=excluded.utilization_pct,
+                    expiry_date=excluded.expiry_date, synced_at=excluded.synced_at""",
+                {**r, "synced_at": ts},
+            )
+        log.info("  → %d reservations cached", len(res_rows))
+    except Exception as exc:
+        log.warning("Reservations: %s", exc)
+        # non-fatal — reservations require special permissions
+
+    # Security score snapshot (always runs regardless of errors)
+    try:
+        from models.queries import calculate_security_score
+        sec = calculate_security_score()
+        today = ts[:10]
+        p = sec.get("penalties", {})
+        conn.execute(
+            """INSERT INTO security_score_history
+               (snapshot_date, score, open_inbound, advisor_high_sec, public_ips, gateways_no_waf, synced_at)
+               VALUES (?,?,?,?,?,?,?)
+               ON CONFLICT(snapshot_date) DO UPDATE SET
+                score=excluded.score, open_inbound=excluded.open_inbound,
+                advisor_high_sec=excluded.advisor_high_sec, public_ips=excluded.public_ips,
+                gateways_no_waf=excluded.gateways_no_waf, synced_at=excluded.synced_at""",
+            (today, sec.get("score", 0), p.get("open_inbound", 0),
+             p.get("advisor_security", 0), p.get("public_ips", 0),
+             p.get("gateways_no_waf", 0), ts),
+        )
+        log.info("  → security score snapshot recorded: %d/100", sec.get("score", 0))
+    except Exception as exc:
+        log.warning("Security score snapshot failed: %s", exc)
 
     # Resource change snapshot (always runs regardless of errors)
     try:

@@ -2,6 +2,10 @@
 {% block title %}{{ server.name }} — PostgreSQL — WTS Azure Manager{% endblock %}
 {% block page_title %}{{ server.name }}{% endblock %}
 
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
 {% block content %}
 
 <div class="d-flex align-items-center gap-2 mb-4">
@@ -15,7 +19,7 @@
   </span>
 </div>
 
-<!-- Overview cards -->
+<!-- KPI row -->
 <div class="row g-3 mb-4">
   <div class="col-6 col-lg-3">
     <div class="card kpi-card">
@@ -33,31 +37,37 @@
   </div>
   <div class="col-6 col-lg-3">
     <div class="card kpi-card">
-      <div class="kpi-value {% if server.ha_mode == 'ZoneRedundant' %}text-success{% else %}text-muted{% endif %}">
-        {{ server.ha_mode or 'None' }}
-      </div>
-      <div class="kpi-label">High Availability</div>
-      <div class="kpi-sub">HA configuration</div>
+      <div class="kpi-value text-info small">{{ server.sku_name or '—' }}</div>
+      <div class="kpi-label">SKU / Compute Tier</div>
+      <div class="kpi-sub">Pricing tier</div>
     </div>
   </div>
   <div class="col-6 col-lg-3">
     <div class="card kpi-card">
-      <div class="kpi-value text-primary">{{ server.backup_retention_days or '—' }}</div>
-      <div class="kpi-label">Backup Retention</div>
-      <div class="kpi-sub">Days</div>
+      <div class="kpi-value {% if advisor_recs %}text-warning{% else %}text-success{% endif %}">
+        {{ advisor_recs | length }}
+      </div>
+      <div class="kpi-label">Advisor Recommendations</div>
+      <div class="kpi-sub">Open items</div>
     </div>
   </div>
 </div>
 
-<!-- Detail tabs -->
+<!-- Nav tabs -->
 <ul class="nav nav-tabs mb-3" id="pg-tabs">
   <li class="nav-item"><button class="nav-link active" data-tab="overview">Overview</button></li>
-  <li class="nav-item"><button class="nav-link" data-tab="advisor">Recommendations</button></li>
+  <li class="nav-item"><button class="nav-link" data-tab="metrics">
+    <i class="bi bi-graph-up me-1"></i>Metrics
+  </button></li>
+  <li class="nav-item"><button class="nav-link" data-tab="advisor">
+    Recommendations
+    {% if advisor_recs %}<span class="badge bg-warning text-dark ms-1" style="font-size:.7rem">{{ advisor_recs|length }}</span>{% endif %}
+  </button></li>
   <li class="nav-item"><button class="nav-link" data-tab="health">Health</button></li>
   <li class="nav-item"><button class="nav-link" data-tab="logs">Logs (KQL)</button></li>
 </ul>
 
-<!-- Overview tab -->
+<!-- ── Overview tab ──────────────────────────────────────────────────── -->
 <div id="tab-overview">
   <div class="row g-3">
     <div class="col-lg-6">
@@ -71,20 +81,9 @@
               <tr><td class="text-muted">Location</td><td>{{ server.location or '—' }}</td></tr>
               <tr><td class="text-muted">SKU / Tier</td><td><code>{{ server.sku_name or '—' }}</code></td></tr>
               <tr><td class="text-muted">Admin Login</td><td>{{ server.admin_login or '—' }}</td></tr>
-              <tr><td class="text-muted">FQDN</td><td><code>{{ server.fqdn or '—' }}</code></td></tr>
               <tr><td class="text-muted">State</td>
                 <td><span class="badge {% if server.state == 'Ready' %}bg-success{% else %}bg-warning text-dark{% endif %}">{{ server.state }}</span></td>
               </tr>
-              <tr><td class="text-muted">HA Mode</td>
-                <td>
-                  {% if server.ha_mode == 'ZoneRedundant' %}
-                  <span class="badge bg-success">Zone Redundant</span>
-                  {% elif server.ha_mode %}
-                  <span class="badge bg-secondary">{{ server.ha_mode }}</span>
-                  {% else %}<span class="text-muted">None</span>{% endif %}
-                </td>
-              </tr>
-              <tr><td class="text-muted">Backup Retention</td><td>{{ server.backup_retention_days or '—' }} days</td></tr>
               <tr><td class="text-muted">PG Version</td><td>{{ server.version or '—' }}</td></tr>
               <tr><td class="text-muted">Storage</td><td>{{ server.storage_gb or '—' }} GiB</td></tr>
               <tr><td class="text-muted">Last Synced</td><td><small class="text-muted">{{ (server.synced_at or '')[:19] }}</small></td></tr>
@@ -95,38 +94,141 @@
     </div>
     <div class="col-lg-6">
       <div class="card">
+        <div class="card-header"><i class="bi bi-terminal me-1"></i> Connection</div>
+        <div class="card-body">
+          <div class="mb-2 small">
+            <strong>Endpoint:</strong>
+            <code class="ms-1">{{ server.name }}.postgres.database.azure.com</code>
+          </div>
+          <div class="small text-muted mb-2">
+            Port: <code>5432</code> &nbsp;·&nbsp; SSL required
+          </div>
+          <div class="small text-muted">
+            Admin: <code>{{ server.admin_login or '(unknown)' }}</code>
+          </div>
+        </div>
+      </div>
+
+      <div class="card mt-3">
         <div class="card-header"><i class="bi bi-tags me-1"></i> Tags</div>
         <div class="card-body">
-          {% if server.tags and server.tags not in ('{}', 'None', '') %}
-          <div class="d-flex flex-wrap gap-1">
-            {% set tags_str = server.tags %}
-            <small class="font-monospace text-muted">{{ tags_str }}</small>
-          </div>
+          {% if server.tags and server.tags not in ('{}', 'None', '', 'null') %}
+          <small class="font-monospace text-muted">{{ server.tags }}</small>
           {% else %}
           <span class="text-muted small">No tags</span>
           {% endif %}
         </div>
       </div>
-
-      {% if server.fqdn %}
-      <div class="card mt-3">
-        <div class="card-header"><i class="bi bi-terminal me-1"></i> Connection</div>
-        <div class="card-body">
-          <div class="mb-2 small">
-            <strong>Endpoint:</strong>
-            <code class="ms-1">{{ server.fqdn }}</code>
-          </div>
-          <div class="small text-muted">
-            Port: <code>5432</code> &nbsp;·&nbsp; SSL required
-          </div>
-        </div>
-      </div>
-      {% endif %}
     </div>
   </div>
 </div>
 
-<!-- Advisor tab -->
+<!-- ── Metrics tab ───────────────────────────────────────────────────── -->
+<div id="tab-metrics" style="display:none">
+  <div class="alert alert-info small mb-3">
+    <i class="bi bi-info-circle me-1"></i>
+    Metrics are pulled live from Log Analytics via KQL. Requires <code>AzureMetrics</code> table populated
+    from PostgreSQL diagnostic settings. Click a chart button below to view in the KQL Console,
+    or use the live charts if your Log Analytics workspace is configured.
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-lg-6">
+      <div class="card">
+        <div class="card-header d-flex align-items-center">
+          <i class="bi bi-cpu me-2 text-primary"></i>CPU Utilisation
+          <button class="btn btn-sm btn-link ms-auto" onclick="openKql(cpuKql)">
+            <i class="bi bi-terminal me-1"></i>Open in KQL
+          </button>
+        </div>
+        <div class="card-body">
+          <div style="height:160px"><canvas id="chart-pg-cpu"></canvas></div>
+          <div class="text-center text-muted small mt-2" id="cpu-placeholder">
+            <i class="bi bi-hourglass-split me-1"></i>Loading...
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card">
+        <div class="card-header d-flex align-items-center">
+          <i class="bi bi-hdd me-2 text-success"></i>Storage Used (GiB)
+          <button class="btn btn-sm btn-link ms-auto" onclick="openKql(storageKql)">
+            <i class="bi bi-terminal me-1"></i>Open in KQL
+          </button>
+        </div>
+        <div class="card-body">
+          <div style="height:160px"><canvas id="chart-pg-storage"></canvas></div>
+          <div class="text-center text-muted small mt-2" id="storage-placeholder">
+            <i class="bi bi-hourglass-split me-1"></i>Loading...
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card">
+        <div class="card-header d-flex align-items-center">
+          <i class="bi bi-people me-2 text-info"></i>Active Connections
+          <button class="btn btn-sm btn-link ms-auto" onclick="openKql(connKql)">
+            <i class="bi bi-terminal me-1"></i>Open in KQL
+          </button>
+        </div>
+        <div class="card-body">
+          <div style="height:160px"><canvas id="chart-pg-conn"></canvas></div>
+          <div class="text-center text-muted small mt-2" id="conn-placeholder">
+            <i class="bi bi-hourglass-split me-1"></i>Loading...
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card">
+        <div class="card-header d-flex align-items-center">
+          <i class="bi bi-arrow-left-right me-2 text-warning"></i>Network IO (bytes)
+          <button class="btn btn-sm btn-link ms-auto" onclick="openKql(netKql)">
+            <i class="bi bi-terminal me-1"></i>Open in KQL
+          </button>
+        </div>
+        <div class="card-body">
+          <div style="height:160px"><canvas id="chart-pg-net"></canvas></div>
+          <div class="text-center text-muted small mt-2" id="net-placeholder">
+            <i class="bi bi-hourglass-split me-1"></i>Loading...
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><i class="bi bi-bar-chart me-1"></i> Quick Metric Queries</div>
+    <div class="card-body">
+      <div class="row g-2">
+        <div class="col-md-3">
+          <button class="btn btn-sm btn-outline-primary w-100" onclick="openKql(cpuKql)">
+            <i class="bi bi-cpu me-1"></i>CPU % (7 days)
+          </button>
+        </div>
+        <div class="col-md-3">
+          <button class="btn btn-sm btn-outline-success w-100" onclick="openKql(storageKql)">
+            <i class="bi bi-hdd me-1"></i>Storage Used
+          </button>
+        </div>
+        <div class="col-md-3">
+          <button class="btn btn-sm btn-outline-info w-100" onclick="openKql(connKql)">
+            <i class="bi bi-people me-1"></i>Connections
+          </button>
+        </div>
+        <div class="col-md-3">
+          <button class="btn btn-sm btn-outline-warning w-100" onclick="openKql(iopsKql)">
+            <i class="bi bi-lightning me-1"></i>IOPS
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Advisor tab ───────────────────────────────────────────────────── -->
 <div id="tab-advisor" style="display:none">
   {% if advisor_recs %}
   <div class="card">
@@ -164,7 +266,7 @@
   {% endif %}
 </div>
 
-<!-- Health tab -->
+<!-- ── Health tab ────────────────────────────────────────────────────── -->
 <div id="tab-health" style="display:none">
   {% if health_item %}
   <div class="card">
@@ -191,7 +293,7 @@
   {% endif %}
 </div>
 
-<!-- Logs tab (KQL) -->
+<!-- ── Logs tab (KQL) ────────────────────────────────────────────────── -->
 <div id="tab-logs" style="display:none">
   <div class="card">
     <div class="card-header"><i class="bi bi-terminal me-1"></i> PostgreSQL Log Investigations</div>
@@ -205,6 +307,9 @@
           ("Error Logs", "AzureDiagnostics\n| where Category == 'PostgreSQLLogs'\n| where Resource == '" ~ server.name.upper() ~ "'\n| where TimeGenerated >= ago(1d)\n| where error_severity_s in ('ERROR','FATAL','PANIC')\n| project TimeGenerated, message_s, error_severity_s\n| order by TimeGenerated desc"),
           ("Connection Events", "AzureDiagnostics\n| where Category == 'PostgreSQLLogs'\n| where Resource == '" ~ server.name.upper() ~ "'\n| where TimeGenerated >= ago(1d)\n| where message_s startswith 'connection'\n| project TimeGenerated, message_s\n| order by TimeGenerated desc"),
           ("Long Running Queries", "AzureDiagnostics\n| where Category == 'PostgreSQLLogs'\n| where Resource == '" ~ server.name.upper() ~ "'\n| where TimeGenerated >= ago(1d)\n| where duration_s > 5\n| project TimeGenerated, message_s, duration_s\n| order by duration_s desc"),
+          ("Deadlocks", "AzureDiagnostics\n| where Category == 'PostgreSQLLogs'\n| where Resource == '" ~ server.name.upper() ~ "'\n| where TimeGenerated >= ago(7d)\n| where message_s contains 'deadlock'\n| project TimeGenerated, message_s\n| order by TimeGenerated desc"),
+          ("Failed Auth", "AzureDiagnostics\n| where Category == 'PostgreSQLLogs'\n| where Resource == '" ~ server.name.upper() ~ "'\n| where TimeGenerated >= ago(1d)\n| where message_s contains 'authentication failed'\n| summarize count() by bin(TimeGenerated,1h)\n| order by TimeGenerated desc"),
+          ("Checkpoint Activity", "AzureDiagnostics\n| where Category == 'PostgreSQLLogs'\n| where Resource == '" ~ server.name.upper() ~ "'\n| where TimeGenerated >= ago(1d)\n| where message_s startswith 'checkpoint'\n| project TimeGenerated, message_s\n| order by TimeGenerated desc"),
         ] %}
         {% for name, query in pg_queries %}
         <div class="col-md-4">
@@ -223,20 +328,86 @@
 
 {% block scripts %}
 <script>
+const PG_NAME = {{ server.name | upper | tojson }};
+
+const cpuKql = `AzureMetrics\n| where ResourceProvider == "MICROSOFT.DBFORPOSTGRESQL"\n| where Resource == "${PG_NAME}"\n| where MetricName == "cpu_percent"\n| where TimeGenerated >= ago(7d)\n| summarize avg(Average) by bin(TimeGenerated, 1h)\n| order by TimeGenerated asc`;
+
+const storageKql = `AzureMetrics\n| where ResourceProvider == "MICROSOFT.DBFORPOSTGRESQL"\n| where Resource == "${PG_NAME}"\n| where MetricName == "storage_used"\n| where TimeGenerated >= ago(7d)\n| summarize avg(Average) by bin(TimeGenerated, 1h)\n| extend StorageGB = avg_Average / 1073741824\n| order by TimeGenerated asc`;
+
+const connKql = `AzureMetrics\n| where ResourceProvider == "MICROSOFT.DBFORPOSTGRESQL"\n| where Resource == "${PG_NAME}"\n| where MetricName == "active_connections"\n| where TimeGenerated >= ago(7d)\n| summarize avg(Average) by bin(TimeGenerated, 1h)\n| order by TimeGenerated asc`;
+
+const netKql = `AzureMetrics\n| where ResourceProvider == "MICROSOFT.DBFORPOSTGRESQL"\n| where Resource == "${PG_NAME}"\n| where MetricName in ("network_bytes_egress","network_bytes_ingress")\n| where TimeGenerated >= ago(7d)\n| summarize avg(Average) by bin(TimeGenerated, 1h), MetricName\n| order by TimeGenerated asc`;
+
+const iopsKql = `AzureMetrics\n| where ResourceProvider == "MICROSOFT.DBFORPOSTGRESQL"\n| where Resource == "${PG_NAME}"\n| where MetricName == "iops"\n| where TimeGenerated >= ago(7d)\n| summarize avg(Average) by bin(TimeGenerated, 1h)\n| order by TimeGenerated asc`;
+
+/* Tab switching */
+const TAB_IDS = ['overview','metrics','advisor','health','logs'];
 document.querySelectorAll('#pg-tabs .nav-link').forEach(btn => {
   btn.addEventListener('click', function() {
     document.querySelectorAll('#pg-tabs .nav-link').forEach(b => b.classList.remove('active'));
     this.classList.add('active');
-    ['overview','advisor','health','logs'].forEach(t => {
-      document.getElementById('tab-' + t).style.display = 'none';
-    });
-    document.getElementById('tab-' + this.dataset.tab).style.display = '';
+    TAB_IDS.forEach(t => { document.getElementById('tab-' + t).style.display = 'none'; });
+    const tab = this.dataset.tab;
+    document.getElementById('tab-' + tab).style.display = '';
+    if (tab === 'metrics') loadMetrics();
   });
 });
 
 function openKql(query) {
   sessionStorage.setItem('kql_prefill', query);
   location.href = '{{ url_for("kql_console") }}';
+}
+
+let metricsLoaded = false;
+async function loadMetrics() {
+  if (metricsLoaded) return;
+  metricsLoaded = true;
+
+  const charts = [
+    { id: 'chart-pg-cpu',     ph: 'cpu-placeholder',     kql: cpuKql,     label: 'CPU %',         color: '#0078d4', yFmt: v => v.toFixed(1)+'%' },
+    { id: 'chart-pg-storage', ph: 'storage-placeholder', kql: storageKql, label: 'Storage (GiB)',  color: '#16a34a', yFmt: v => v.toFixed(1)+' GiB' },
+    { id: 'chart-pg-conn',    ph: 'conn-placeholder',    kql: connKql,    label: 'Connections',    color: '#0891b2', yFmt: v => v.toFixed(0) },
+    { id: 'chart-pg-net',     ph: 'net-placeholder',     kql: netKql,     label: 'Network (bytes)',color: '#d97706', yFmt: v => (v/1024).toFixed(0)+'K' },
+  ];
+
+  for (const cfg of charts) {
+    try {
+      const r = await fetch('/api/kql/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token() }}' },
+        body: JSON.stringify({ query: cfg.kql })
+      });
+      const data = await r.json();
+      const rows = data.rows || [];
+      document.getElementById(cfg.ph).style.display = 'none';
+      if (!rows.length) {
+        document.getElementById(cfg.ph).textContent = 'No data — check diagnostic settings';
+        document.getElementById(cfg.ph).style.display = '';
+        continue;
+      }
+      const labels = rows.map(r => (r[0] || '').toString().substring(0, 16));
+      const values = rows.map(r => parseFloat(r[1]) || 0);
+      new Chart(document.getElementById(cfg.id), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{ label: cfg.label, data: values, borderColor: cfg.color,
+            backgroundColor: cfg.color + '15', fill: true, tension: 0.3, pointRadius: 0 }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { maxTicksLimit: 8, font: { size: 9 } } },
+            y: { ticks: { font: { size: 9 }, callback: cfg.yFmt } }
+          }
+        }
+      });
+    } catch(e) {
+      document.getElementById(cfg.ph).textContent = 'Chart unavailable';
+      document.getElementById(cfg.ph).style.display = '';
+    }
+  }
 }
 </script>
 {% endblock %}

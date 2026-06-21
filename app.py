@@ -191,6 +191,8 @@ def dashboard():
             "resource_counts": queries.get_resource_counts_by_type(),
             "health_summary": queries.health_summary(),
             "security_score": queries.calculate_security_score(),
+            "top_risks": queries.get_top_security_risks(8),
+            "recent_changes": queries.get_recent_changes_summary(),
         }
     except Exception as exc:
         flash(_rbac_error(exc), "danger")
@@ -381,6 +383,13 @@ def api_cost_trend():
 @login_required
 def api_cost_by_rg():
     return jsonify(queries.get_cost_by_resource_group_mtd())
+
+
+@app.route("/api/security/trend")
+@login_required
+def api_security_trend():
+    days = int(request.args.get("days", 30))
+    return jsonify(queries.get_security_score_trend(days))
 
 
 # ── Advisor ───────────────────────────────────────────────────────────────────
@@ -953,6 +962,90 @@ def healthz():
         })
     except Exception as exc:
         return jsonify({"status": "error", "detail": str(exc)}), 500
+
+
+# ── Reservations (Phase 11) ──────────────────────────────────────────────────
+
+@app.route("/reservations")
+@login_required
+def reservations_view():
+    state = request.args.get("state")
+    try:
+        items = queries.get_reservations(state_filter=state)
+        summary = queries.get_reservation_summary()
+    except Exception as exc:
+        flash(_rbac_error(exc), "danger")
+        items, summary = [], {}
+    return render_template(
+        "reservations.html",
+        items=items,
+        summary=summary,
+        selected_state=state,
+    )
+
+
+# ── Reporting (Phase 16) ─────────────────────────────────────────────────────
+
+@app.route("/report")
+@login_required
+def report_view():
+    try:
+        data = queries.get_report_data()
+        score = data.get("security_score", {})
+        cost_by_rg = data.get("cost_by_rg", [])
+        mtd = data.get("mtd_cost", 0)
+    except Exception as exc:
+        flash(_rbac_error(exc), "danger")
+        data, score, cost_by_rg, mtd = {}, {}, [], 0
+    return render_template(
+        "report.html",
+        data=data,
+        score=score,
+        cost_by_rg=cost_by_rg,
+        mtd=mtd,
+        budget=config.MONTHLY_BUDGET,
+        sync=queries.last_sync_info(),
+    )
+
+
+@app.route("/api/report/json")
+@login_required
+def api_report_json():
+    """Full report data as JSON for programmatic consumption."""
+    data = queries.get_report_data()
+    resp = jsonify(data)
+    resp.headers["Content-Disposition"] = "attachment; filename=wts_azure_report.json"
+    return resp
+
+
+@app.route("/api/report/csv/<section>")
+@login_required
+def api_report_csv(section):
+    """Download a specific section of the report as CSV."""
+    import csv
+    import io
+    data = queries.get_report_data()
+    section_map = {
+        "vms": ("vms", ["name", "resource_group", "location", "vm_size", "os_type", "power_state", "tags"]),
+        "open_ports": ("open_ports", ["nsg_name", "resource_group", "rule_name", "dest_port", "source_prefix", "priority"]),
+        "advisor": ("advisor_high", ["category", "impact", "short_description", "solution", "resource_id"]),
+        "cost": ("cost_by_rg", ["resource_group", "total"]),
+        "postgresql": ("pg_servers", ["name", "resource_group", "location", "version", "state", "sku_name", "storage_gb"]),
+        "sql": ("sql_servers", ["name", "resource_group", "location", "state", "fqdn"]),
+        "backup": ("backup_issues", ["vm_name", "vault_name", "last_backup_status", "last_backup_time", "resource_group"]),
+    }
+    if section not in section_map:
+        return jsonify({"error": "unknown section"}), 400
+    key, fields = section_map[section]
+    rows = data.get(key, [])
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    output = buf.getvalue()
+    resp = app.response_class(output, mimetype="text/csv")
+    resp.headers["Content-Disposition"] = f"attachment; filename=wts_{section}_{data.get('generated_at','')[:10]}.csv"
+    return resp
 
 
 # ── Sync Now ──────────────────────────────────────────────────────────────────

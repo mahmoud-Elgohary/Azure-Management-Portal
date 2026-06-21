@@ -82,6 +82,35 @@ def fetch_public_ips() -> list[dict]:
     return _query(kql)
 
 
+def fetch_reservations() -> list[dict]:
+    """Fetch Azure reservation details via the reservationresources table."""
+    kql = """
+    reservationresources
+    | where type == "microsoft.capacity/reservationorders/reservations"
+    | extend props = properties
+    | project
+        reservation_id  = id,
+        name,
+        sku_name        = tostring(sku.name),
+        location,
+        quantity        = toint(props.quantity),
+        term            = tostring(props.term),
+        scope_type      = tostring(props.appliedScopeType),
+        scope           = tostring(coalesce(props.appliedScopes[0], '')),
+        state           = tostring(props.provisioningState),
+        expiry_date     = tostring(props.expiryDate),
+        purchase_date   = tostring(props.purchaseDate),
+        utilization_pct = todouble(props.utilization.aggregates[0].value),
+        order_id        = tostring(split(id, '/')[8]),
+        subscription_id = subscriptionId
+    | order by state asc, expiry_date asc
+    """
+    try:
+        return _query(kql)
+    except Exception:
+        return []
+
+
 def fetch_generic_resources() -> list[dict]:
     """Fetch Storage Accounts, Key Vaults, VPN Gateways, Bastions, Log Analytics, and Container Registries."""
     kql = """
