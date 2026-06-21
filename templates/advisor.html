@@ -101,4 +101,30 @@
   {% endif %}
 </div>
 {% endif %}
+
+<!-- KQL Investigation -->
+<div class="card mt-4">
+  <div class="card-header"><i class="bi bi-terminal me-1"></i> Advisor Investigations (KQL)</div>
+  <div class="card-body">
+    <p class="small text-muted mb-3">Correlate Advisor recommendations with activity and resource state.</p>
+    <div class="row g-2">
+      {% set adv_queries = [
+        ("Cost — Idle VMs", "Resources\n| where type == 'microsoft.compute/virtualmachines'\n| join kind=inner (\n    Perf | where ObjectName == 'Processor' and CounterName == '% Processor Time'\n    | where TimeGenerated >= ago(7d)\n    | summarize AvgCPU = avg(CounterValue) by Computer\n    | where AvgCPU < 5\n) on $left.name == $right.Computer\n| project name, AvgCPU\n| order by AvgCPU asc"),
+        ("Cost — Unattached Disks", "Resources\n| where type == 'microsoft.compute/disks'\n| where properties.diskState == 'Unattached'\n| project name, resourceGroup, sku = tostring(sku.name), sizeGB = properties.diskSizeGB\n| order by sizeGB desc"),
+        ("Security — Open NSG Rules", "AzureActivity\n| where OperationNameValue contains 'MICROSOFT.NETWORK/NETWORKSECURITYGROUPS'\n| where TimeGenerated >= ago(30d)\n| project TimeGenerated, Caller, ResourceGroup, OperationNameValue\n| order by TimeGenerated desc"),
+        ("Reliability — VM Restarts", "AzureActivity\n| where OperationNameValue == 'MICROSOFT.COMPUTE/VIRTUALMACHINES/RESTART/ACTION'\n| where TimeGenerated >= ago(30d)\n| summarize count() by ResourceId, bin(TimeGenerated, 1d)\n| order by TimeGenerated desc"),
+        ("Performance — High CPU VMs", "Perf\n| where ObjectName == 'Processor' and CounterName == '% Processor Time'\n| where TimeGenerated >= ago(1d)\n| summarize AvgCPU = avg(CounterValue) by Computer\n| where AvgCPU > 80\n| order by AvgCPU desc"),
+        ("Advisor Trend (Activity)", "AzureActivity\n| where OperationNameValue contains 'MICROSOFT.ADVISOR'\n| where TimeGenerated >= ago(30d)\n| project TimeGenerated, Caller, ResourceGroup, OperationNameValue\n| order by TimeGenerated desc"),
+      ] %}
+      {% for name, query in adv_queries %}
+      <div class="col-md-4">
+        <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                onclick="sessionStorage.setItem('kql_prefill', {{ query | tojson }}); location.href='{{ url_for('kql_console') }}'">
+          <i class="bi bi-terminal me-1"></i>{{ name }}
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
 {% endblock %}

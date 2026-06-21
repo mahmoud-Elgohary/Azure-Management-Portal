@@ -113,4 +113,30 @@
   {% endif %}
 </div>
 {% endif %}
+
+<!-- KQL Investigation -->
+<div class="card mt-4">
+  <div class="card-header"><i class="bi bi-terminal me-1"></i> Health Investigations (KQL)</div>
+  <div class="card-body">
+    <p class="small text-muted mb-3">Query health and availability events from Log Analytics and Azure Service Health.</p>
+    <div class="row g-2">
+      {% set health_queries = [
+        ("Service Health Events", "ServiceHealthResources\n| where type == 'microsoft.resourcehealth/events'\n| where TimeGenerated >= ago(30d)\n| project title = tostring(properties.title), impactedServices = tostring(properties.impact), status = tostring(properties.status)\n| limit 50"),
+        ("VM Availability Drops", "AzureActivity\n| where OperationNameValue in ('MICROSOFT.COMPUTE/VIRTUALMACHINES/DEALLOCATE/ACTION','MICROSOFT.COMPUTE/VIRTUALMACHINES/POWEROFF/ACTION')\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, ResourceGroup, ResourceId\n| order by TimeGenerated desc"),
+        ("Resource Unavailability", "AzureActivity\n| where ActivityStatus == 'Failed'\n| where TimeGenerated >= ago(1d)\n| summarize count() by ResourceProvider, ActivitySubstatus\n| order by count_ desc"),
+        ("Health Metric Alerts", "AlertsManagementResources\n| where type == 'microsoft.alertsmanagement/alerts'\n| where properties.essentials.severity in ('Sev0','Sev1')\n| project name, severity = tostring(properties.essentials.severity), state = tostring(properties.essentials.alertState)\n| order by severity asc"),
+        ("Heartbeat Gaps (VMs)", "Heartbeat\n| where TimeGenerated >= ago(1h)\n| summarize LastBeat = max(TimeGenerated) by Computer\n| where LastBeat < ago(10m)\n| project Computer, LastBeat\n| order by LastBeat asc"),
+        ("Platform Incidents", "ServiceHealthResources\n| where type == 'microsoft.resourcehealth/events'\n| where properties.eventType == 'ServiceIssue'\n| where TimeGenerated >= ago(30d)\n| project title = tostring(properties.title), region = tostring(properties.impactedRegion)\n| limit 20"),
+      ] %}
+      {% for name, query in health_queries %}
+      <div class="col-md-4">
+        <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                onclick="sessionStorage.setItem('kql_prefill', {{ query | tojson }}); location.href='{{ url_for('kql_console') }}'">
+          <i class="bi bi-terminal me-1"></i>{{ name }}
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
 {% endblock %}

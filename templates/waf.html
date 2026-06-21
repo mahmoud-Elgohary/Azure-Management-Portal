@@ -2,6 +2,10 @@
 {% block title %}WAF Center — WTS Azure Manager{% endblock %}
 {% block page_title %}WAF Center{% endblock %}
 
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
 {% block content %}
 
 {% set prevention = gateways | selectattr('waf_mode', 'equalto', 'Prevention') | list | length %}
@@ -9,7 +13,7 @@
 {% set waf_on_count = summary.get('waf_enabled', 0) %}
 {% set total_gw = summary.get('total_gateways', 0) %}
 
-<!-- KPI row -->
+<!-- ── KPI row ────────────────────────────────────────────────────────── -->
 <div class="row g-3 mb-3">
   <div class="col-6 col-lg-3">
     <div class="card kpi-card">
@@ -43,7 +47,7 @@
       <div class="kpi-value {% if prevention > 0 %}text-danger{% else %}text-muted{% endif %}">{{ prevention }}</div>
       <div class="kpi-label">Prevention Mode</div>
       <div class="kpi-sub">
-        <span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25">Blocking active threats</span>
+        <span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25">Actively blocking</span>
       </div>
     </div>
   </div>
@@ -53,13 +57,13 @@
       <div class="kpi-value {% if detection > 0 %}text-warning{% else %}text-muted{% endif %}">{{ detection }}</div>
       <div class="kpi-label">Detection Mode</div>
       <div class="kpi-sub">
-        <span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25">Logging only — not blocking</span>
+        <span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25">Logging only</span>
       </div>
     </div>
   </div>
 </div>
 
-<!-- Security posture banner -->
+<!-- WAF posture banner -->
 {% if gateways %}
   {% set detection_only = gateways | selectattr('waf_mode', 'equalto', 'Detection') | list %}
   {% set no_waf = gateways | rejectattr('waf_enabled') | list %}
@@ -86,8 +90,81 @@
 </div>
 {% else %}
 
-<!-- Gateway list -->
-<div class="card mb-4">
+<!-- ── Live WAF Analytics ─────────────────────────────────────────────── -->
+<div class="row g-3 mb-4">
+  <div class="col-lg-8">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-bar-chart me-2 text-danger"></i>WAF Blocks — Last 24 Hours
+        <button class="btn btn-sm btn-link ms-auto" onclick="openKql(kqlBlockTrend)">
+          <i class="bi bi-terminal me-1"></i>Open KQL
+        </button>
+        <button class="btn btn-sm btn-outline-secondary ms-1" onclick="loadWafBlocks()">
+          <i class="bi bi-arrow-clockwise"></i>
+        </button>
+      </div>
+      <div class="card-body">
+        <div style="height:160px;position:relative">
+          <canvas id="chart-waf-blocks"></canvas>
+          <div id="waf-blocks-placeholder" class="position-absolute top-50 start-50 translate-middle text-center text-muted small" style="pointer-events:none">
+            <i class="bi bi-hourglass-split me-1"></i>Loading live WAF data…
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-geo-alt me-2 text-warning"></i>Top Blocked IPs
+        <button class="btn btn-sm btn-link ms-auto" onclick="openKql(kqlTopIPs)">
+          <i class="bi bi-terminal me-1"></i>KQL
+        </button>
+      </div>
+      <div class="card-body p-0" id="top-ips-container">
+        <div class="p-3 text-center text-muted small">
+          <i class="bi bi-hourglass-split me-1"></i>Loading…
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-list-stars me-2 text-primary"></i>Top Fired WAF Rules (7d)
+        <button class="btn btn-sm btn-link ms-auto" onclick="openKql(kqlTopRules)">
+          <i class="bi bi-terminal me-1"></i>KQL
+        </button>
+      </div>
+      <div class="card-body p-0" id="top-rules-container">
+        <div class="p-3 text-center text-muted small">
+          <i class="bi bi-hourglass-split me-1"></i>Loading…
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-shield-slash me-2 text-danger"></i>Attack Categories (7d)
+        <button class="btn btn-sm btn-link ms-auto" onclick="openKql(kqlAttackTypes)">
+          <i class="bi bi-terminal me-1"></i>KQL
+        </button>
+      </div>
+      <div class="card-body p-0" id="attack-types-container">
+        <div class="p-3 text-center text-muted small">
+          <i class="bi bi-hourglass-split me-1"></i>Loading…
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Gateway list ──────────────────────────────────────────────────── -->
+<div class="card mb-4" id="gw-table">
   <div class="card-header d-flex align-items-center gap-2">
     <i class="bi bi-router me-1"></i> Application Gateways
     <span class="badge bg-secondary ms-auto">{{ gateways | length }}</span>
@@ -146,15 +223,14 @@
 </div>
 
 {% if waf_rules %}
-<!-- WAF rules -->
-<div class="card">
+<div class="card mb-4">
   <div class="card-header d-flex align-items-center gap-2">
-    <i class="bi bi-list-check me-1"></i> WAF Rule Groups (Disabled)
+    <i class="bi bi-list-check me-1"></i> WAF Rule Groups (Disabled / Overridden)
     <span class="badge bg-warning text-dark ms-auto">{{ waf_rules | length }}</span>
-    <small class="text-muted ms-1">Only disabled/overridden rules are shown</small>
+    <small class="text-muted ms-1">Only disabled/overridden rules shown</small>
   </div>
   <div class="card-body p-0">
-    <div class="table-responsive" style="max-height:400px;overflow-y:auto">
+    <div class="table-responsive" style="max-height:360px;overflow-y:auto">
       <table class="table table-sm mb-0">
         <thead class="table-light sticky-top">
           <tr><th>Gateway</th><th>Rule Set</th><th>Version</th><th>Rule Group</th><th>State</th></tr>
@@ -166,9 +242,7 @@
             <td>{{ r.rule_set_type or '—' }}</td>
             <td>{{ r.rule_set_version or '—' }}</td>
             <td>{{ r.rule_group or '—' }}</td>
-            <td>
-              <span class="badge bg-secondary">{{ r.state or 'Unknown' }}</span>
-            </td>
+            <td><span class="badge bg-secondary">{{ r.state or 'Unknown' }}</span></td>
           </tr>
           {% endfor %}
         </tbody>
@@ -179,29 +253,29 @@
 {% endif %}
 
 <!-- WAF KQL investigation links -->
-<div class="card mt-4">
+<div class="card mt-3">
   <div class="card-header"><i class="bi bi-terminal me-1"></i> WAF Investigations (KQL)</div>
   <div class="card-body">
     <p class="small text-muted mb-3">
-      Use the KQL Console to investigate WAF events from Log Analytics.
-      These queries require Application Gateway diagnostic logs to be sent to a Log Analytics workspace.
+      Requires Application Gateway diagnostic logs in Log Analytics (<code>AzureDiagnostics</code> with <code>ApplicationGatewayFirewallLog</code>).
     </p>
     <div class="row g-2">
       {% set waf_queries = [
         ("WAF Blocks Today", "AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(1d)\n| where action_s == 'Blocked'\n| summarize count() by ruleId_s, ruleGroup_s\n| order by count_ desc\n| limit 50"),
-        ("Top Blocked Source IPs", "AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(7d)\n| where action_s == 'Blocked'\n| summarize count() by clientIp_s\n| order by count_ desc\n| limit 20"),
+        ("Top Blocked IPs (7d)", "AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(7d)\n| where action_s == 'Blocked'\n| summarize count() by clientIp_s\n| order by count_ desc\n| limit 20"),
         ("Top Matched URIs", "AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(7d)\n| summarize count() by requestUri_s\n| order by count_ desc\n| limit 20"),
-        ("Attack Types Last 7d", "AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(7d)\n| where action_s == 'Blocked'\n| summarize count() by ruleGroup_s\n| order by count_ desc"),
-        ("Hourly Block Trend", "AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(24h)\n| where action_s == 'Blocked'\n| summarize count() by bin(TimeGenerated, 1h)\n| order by TimeGenerated asc"),
+        ("Attack Types (7d)", "AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(7d)\n| where action_s == 'Blocked'\n| summarize count() by ruleGroup_s\n| order by count_ desc"),
+        ("Hourly Block Trend (24h)", "AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(24h)\n| where action_s == 'Blocked'\n| summarize count() by bin(TimeGenerated, 1h)\n| order by TimeGenerated asc"),
         ("SQL Injection Attempts", "AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(7d)\n| where ruleGroup_s == 'SQLI'\n| project TimeGenerated, clientIp_s, requestUri_s, ruleId_s, action_s\n| order by TimeGenerated desc"),
+        ("XSS Attempts", "AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(7d)\n| where ruleGroup_s == 'XSS'\n| project TimeGenerated, clientIp_s, requestUri_s, ruleId_s, action_s\n| order by TimeGenerated desc"),
+        ("Blocked by Country", "AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(7d)\n| where action_s == 'Blocked'\n| extend geo = geo_info_from_ip_address(clientIp_s)\n| summarize count() by tostring(geo.country)\n| order by count_ desc"),
+        ("Backend Health Issues", "AzureDiagnostics\n| where Category == 'ApplicationGatewayBackendHealth'\n| where TimeGenerated >= ago(1d)\n| project TimeGenerated, Resource, httpStatusCode_d, timeTaken_d\n| where httpStatusCode_d >= 500\n| order by TimeGenerated desc"),
       ] %}
       {% for name, query in waf_queries %}
       <div class="col-md-4">
-        <a href="{{ url_for('kql_console') }}"
-           class="btn btn-sm btn-outline-secondary w-100 text-start"
-           onclick="sessionStorage.setItem('kql_prefill', {{ query | tojson }}); location.href='{{ url_for('kql_console') }}'; return false;">
+        <button class="btn btn-sm btn-outline-secondary w-100 text-start" onclick="openKql({{ query | tojson }})">
           <i class="bi bi-terminal me-1"></i>{{ name }}
-        </a>
+        </button>
       </div>
       {% endfor %}
     </div>
@@ -210,4 +284,123 @@
 
 {% endif %}
 
+{% endblock %}
+
+{% block scripts %}
+<script>
+const kqlBlockTrend = `AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(24h)\n| where action_s == 'Blocked'\n| summarize Blocks = count() by bin(TimeGenerated, 1h)\n| order by TimeGenerated asc`;
+
+const kqlTopIPs = `AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(7d)\n| where action_s == 'Blocked'\n| summarize Blocks = count() by clientIp_s\n| order by Blocks desc\n| limit 10`;
+
+const kqlTopRules = `AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(7d)\n| where action_s == 'Blocked'\n| summarize Hits = count() by ruleId_s, ruleGroup_s\n| order by Hits desc\n| limit 10`;
+
+const kqlAttackTypes = `AzureDiagnostics\n| where Category == 'ApplicationGatewayFirewallLog'\n| where TimeGenerated >= ago(7d)\n| where action_s == 'Blocked'\n| summarize Blocks = count() by ruleGroup_s\n| order by Blocks desc`;
+
+function openKql(query) {
+  sessionStorage.setItem('kql_prefill', query);
+  location.href = '{{ url_for("kql_console") }}';
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function kqlFetch(query) {
+  const r = await fetch('/api/kql/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token() }}' },
+    body: JSON.stringify({ query })
+  });
+  return r.json();
+}
+
+let blocksChart = null;
+async function loadWafBlocks() {
+  const ph = document.getElementById('waf-blocks-placeholder');
+  try {
+    const data = await kqlFetch(kqlBlockTrend);
+    const rows = data.rows || [];
+    if (ph) ph.style.display = rows.length ? 'none' : '';
+    if (!rows.length) { if (ph) ph.textContent = 'No WAF block data — check diagnostic settings'; return; }
+
+    const labels = rows.map(r => (r[0] || '').toString().substring(0, 13).replace('T', ' '));
+    const values = rows.map(r => parseInt(r[1]) || 0);
+    if (blocksChart) blocksChart.destroy();
+    blocksChart = new Chart(document.getElementById('chart-waf-blocks'), {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{ label: 'Blocks', data: values, backgroundColor: 'rgba(220,38,38,0.7)', borderColor: '#dc2626', borderWidth: 1 }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { maxTicksLimit: 12, font: { size: 9 } } },
+          y: { ticks: { font: { size: 9 } } }
+        }
+      }
+    });
+  } catch(e) { if (ph) { ph.style.display = ''; ph.textContent = 'WAF data unavailable'; } }
+}
+
+async function loadTopIPs() {
+  const el = document.getElementById('top-ips-container');
+  try {
+    const data = await kqlFetch(kqlTopIPs);
+    const rows = (data.rows || []).slice(0, 8);
+    if (!rows.length) { el.innerHTML = '<div class="p-3 text-muted small text-center">No blocked IPs in last 7 days</div>'; return; }
+    const max = Math.max(...rows.map(r => parseInt(r[1]) || 1));
+    el.innerHTML = '<div class="p-2">' + rows.map(r => {
+      const ip = esc(r[0] || '—'), cnt = parseInt(r[1]) || 0, pct = Math.round(cnt/max*100);
+      return `<div class="mb-1">
+        <div class="d-flex justify-content-between small mb-1">
+          <code class="text-danger">${ip}</code><span class="fw-500">${cnt}</span>
+        </div>
+        <div class="progress" style="height:5px"><div class="progress-bar bg-danger" style="width:${pct}%"></div></div>
+      </div>`;
+    }).join('') + '</div>';
+  } catch(e) { el.innerHTML = '<div class="p-3 text-muted small text-center">Data unavailable</div>'; }
+}
+
+async function loadTopRules() {
+  const el = document.getElementById('top-rules-container');
+  try {
+    const data = await kqlFetch(kqlTopRules);
+    const rows = (data.rows || []).slice(0, 8);
+    if (!rows.length) { el.innerHTML = '<div class="p-3 text-muted small text-center">No rule hits in last 7 days</div>'; return; }
+    el.innerHTML = `<table class="table table-sm mb-0"><thead class="table-light"><tr><th>Rule ID</th><th>Group</th><th class="text-end">Hits</th></tr></thead><tbody>` +
+      rows.map(r => `<tr><td><code class="small">${esc(r[0])}</code></td><td><small>${esc(r[1])}</small></td><td class="text-end fw-500">${esc(r[2])}</td></tr>`).join('') +
+      '</tbody></table>';
+  } catch(e) { el.innerHTML = '<div class="p-3 text-muted small text-center">Data unavailable</div>'; }
+}
+
+async function loadAttackTypes() {
+  const el = document.getElementById('attack-types-container');
+  try {
+    const data = await kqlFetch(kqlAttackTypes);
+    const rows = (data.rows || []).slice(0, 8);
+    if (!rows.length) { el.innerHTML = '<div class="p-3 text-muted small text-center">No attack data in last 7 days</div>'; return; }
+    const max = Math.max(...rows.map(r => parseInt(r[1]) || 1));
+    const colors = { SQLI: '#dc2626', XSS: '#d97706', RCE: '#7c3aed', LFI: '#0891b2', RFI: '#16a34a', SCANNER: '#6b7280' };
+    el.innerHTML = '<div class="p-2">' + rows.map(r => {
+      const grp = r[0] || '—', cnt = parseInt(r[1]) || 0, pct = Math.round(cnt/max*100);
+      const color = colors[grp] || '#0078d4';
+      return `<div class="mb-1">
+        <div class="d-flex justify-content-between small mb-1">
+          <span class="badge" style="background:${color}20;color:${color};border:1px solid ${color}40">${esc(grp)}</span>
+          <span class="fw-500">${cnt}</span>
+        </div>
+        <div class="progress" style="height:5px"><div class="progress-bar" style="width:${pct}%;background:${color}"></div></div>
+      </div>`;
+    }).join('') + '</div>';
+  } catch(e) { el.innerHTML = '<div class="p-3 text-muted small text-center">Data unavailable</div>'; }
+}
+
+// Load live WAF data on page load
+loadWafBlocks();
+loadTopIPs();
+loadTopRules();
+loadAttackTypes();
+</script>
 {% endblock %}

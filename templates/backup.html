@@ -3,40 +3,122 @@
 {% block page_title %}Backup Status{% endblock %}
 
 {% block content %}
-<h5 class="mb-3">Backup Status</h5>
+
+<!-- KPI row -->
+<div class="row g-3 mb-3">
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-primary">{{ items | length }}</div>
+      <div class="kpi-label">Total Protected VMs</div>
+      <div class="kpi-sub">in Recovery Services Vaults</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-success">{{ (items | length) - (problem_count or 0) }}</div>
+      <div class="kpi-label">Completed</div>
+      <div class="kpi-sub">Last backup successful</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card {% if problem_count %}border-danger{% endif %}">
+      <div class="kpi-value {% if problem_count %}text-danger{% else %}text-success{% endif %}">{{ problem_count or 0 }}</div>
+      <div class="kpi-label">Failed / Stale</div>
+      <div class="kpi-sub">{% if problem_count %}Needs attention{% else %}All healthy{% endif %}</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-muted">{{ items | map(attribute='vault_name') | unique | list | length }}</div>
+      <div class="kpi-label">Vaults</div>
+      <div class="kpi-sub">Recovery Services Vaults</div>
+    </div>
+  </div>
+</div>
 
 {% if problem_count > 0 %}
-  <div class="alert alert-danger">{{ problem_count }} VM(s) have failed or stale backups.</div>
-{% else %}
-  <div class="alert alert-success">All tracked VMs have recent successful backups.</div>
+<div class="alert alert-danger d-flex align-items-center gap-2 mb-3">
+  <i class="bi bi-exclamation-triangle-fill fs-5"></i>
+  <div><strong>{{ problem_count }} VM{{ 's' if problem_count > 1 else '' }}</strong> with failed or missing backups. Review immediately to ensure data protection.</div>
+</div>
+{% elif items %}
+<div class="alert alert-success d-flex align-items-center gap-2 mb-3">
+  <i class="bi bi-shield-check fs-5"></i>
+  <div>All {{ items | length }} tracked VM{{ 's' if items|length > 1 else '' }} have recent successful backups.</div>
+</div>
 {% endif %}
 
 {% if items %}
-<div class="table-responsive">
-  <table class="table table-hover table-sm align-middle">
-    <thead class="table-dark">
-      <tr><th>VM</th><th>Vault</th><th>Resource Group</th><th>Protection State</th><th>Last Backup</th><th>Last Status</th></tr>
-    </thead>
-    <tbody>
-      {% for item in items %}
-      {% set is_problem = item.last_backup_status != 'Completed' or not item.last_backup_time %}
-      <tr class="{% if is_problem %}table-danger{% endif %}">
-        <td>{{ item.vm_name or '—' }}</td>
-        <td>{{ item.vault_name }}</td>
-        <td>{{ item.resource_group }}</td>
-        <td>{{ item.protection_state or '—' }}</td>
-        <td>{{ (item.last_backup_time or '—')[:16].replace('T',' ') }}</td>
-        <td>
-          <span class="badge {% if item.last_backup_status == 'Completed' %}bg-success{% else %}bg-danger{% endif %}">
-            {{ item.last_backup_status or 'Unknown' }}
-          </span>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<div class="card mb-4">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover table-sm align-middle mb-0">
+        <thead class="table-dark">
+          <tr><th>VM</th><th>Vault</th><th>Resource Group</th><th>Protection State</th><th>Last Backup</th><th>Last Status</th></tr>
+        </thead>
+        <tbody>
+          {% for item in items | sort(attribute='last_backup_status') %}
+          {% set is_problem = item.last_backup_status != 'Completed' or not item.last_backup_time %}
+          <tr class="{% if is_problem %}table-danger{% endif %}">
+            <td>
+              <strong class="small">{{ item.vm_name or '—' }}</strong>
+            </td>
+            <td><small>{{ item.vault_name }}</small></td>
+            <td><small class="text-muted">{{ item.resource_group }}</small></td>
+            <td>
+              <span class="badge {% if item.protection_state == 'Protected' %}bg-success{% elif item.protection_state == 'ProtectionStopped' %}bg-danger{% else %}bg-secondary{% endif %}" style="font-size:.7rem">
+                {{ item.protection_state or '—' }}
+              </span>
+            </td>
+            <td><small class="{% if is_problem %}text-danger{% else %}text-muted{% endif %}">{{ (item.last_backup_time or '—')[:16].replace('T',' ') }}</small></td>
+            <td>
+              <span class="badge {% if item.last_backup_status == 'Completed' %}bg-success{% elif item.last_backup_status == 'IRPending' %}bg-info{% else %}bg-danger{% endif %}">
+                {{ item.last_backup_status or 'Unknown' }}
+              </span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
 </div>
 {% else %}
-  <div class="alert alert-info">No backup data. Ensure Recovery Services Reader role is assigned and sync has run.</div>
+<div class="card mb-4">
+  <div class="card-body text-center py-5 text-muted">
+    <i class="bi bi-shield-check fs-1 d-block mb-2"></i>
+    <h5>No backup data</h5>
+    <p class="small">Ensure Recovery Services Reader role is assigned and sync has run.</p>
+  </div>
+</div>
 {% endif %}
+
+<!-- KQL Investigation -->
+<div class="card">
+  <div class="card-header"><i class="bi bi-terminal me-1"></i> Backup Investigations (KQL)</div>
+  <div class="card-body">
+    <p class="small text-muted mb-3">
+      Query backup events from Log Analytics. Requires Recovery Services diagnostic settings sending to a workspace.
+    </p>
+    <div class="row g-2">
+      {% set bk_queries = [
+        ("Failed Backup Jobs", "AzureDiagnostics\n| where Category == 'AzureBackupReport'\n| where OperationName == 'Job'\n| where JobStatus_s == 'Failed'\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Resource, JobOperation_s, JobFailureCode_s, BackupItemUniqueId_s\n| order by TimeGenerated desc"),
+        ("Backup Job History", "AzureDiagnostics\n| where Category == 'AzureBackupReport'\n| where OperationName == 'Job'\n| where TimeGenerated >= ago(7d)\n| summarize count() by JobStatus_s, JobOperation_s\n| order by count_ desc"),
+        ("Storage Consumed", "AzureDiagnostics\n| where Category == 'AzureBackupReport'\n| where OperationName == 'BackupItem'\n| where TimeGenerated >= ago(1d)\n| project Resource, BackupItemFriendlyName_s, StorageConsumedInMBs_s\n| order by StorageConsumedInMBs_s desc"),
+        ("Policy Compliance", "AzureDiagnostics\n| where Category == 'AzureBackupReport'\n| where OperationName == 'BackupItemAssociation'\n| where TimeGenerated >= ago(1d)\n| summarize count() by PolicyName_s\n| order by count_ desc"),
+        ("Backup Alerts", "AzureDiagnostics\n| where Category == 'AzureBackupReport'\n| where OperationName == 'Alert'\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Resource, AlertStatus_s, AlertType_s\n| order by TimeGenerated desc"),
+        ("Long Running Jobs", "AzureDiagnostics\n| where Category == 'AzureBackupReport'\n| where OperationName == 'Job'\n| where TimeGenerated >= ago(7d)\n| where toint(JobDurationInSecs_s) > 3600\n| project TimeGenerated, Resource, JobOperation_s, DurationHours = round(toint(JobDurationInSecs_s)/3600.0, 1)\n| order by DurationHours desc"),
+      ] %}
+      {% for name, query in bk_queries %}
+      <div class="col-md-4">
+        <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                onclick="sessionStorage.setItem('kql_prefill', {{ query | tojson }}); location.href='{{ url_for('kql_console') }}'">
+          <i class="bi bi-terminal me-1"></i>{{ name }}
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
 {% endblock %}

@@ -644,12 +644,14 @@ def security_view():
         advisor_sec       = queries.get_advisor_recs(category="Security")
         nsg_rules         = queries.get_nsg_rules()
         gateways          = queries.get_app_gateways()
-        sec_history       = queries.get_security_history(days=14)
         public_ip_exposure = queries.get_public_ip_exposure()
+        sec_trend          = queries.get_security_score_trend(days=30)
+        # fall back to approximate history if no real scores yet
+        sec_history        = sec_trend if sec_trend else queries.get_security_history(days=14)
     except Exception as exc:
         flash(_rbac_error(exc), "danger")
         summary, open_ports, high_risk, score, advisor_sec, nsg_rules, gateways = {}, [], [], {}, [], [], []
-        sec_history, public_ip_exposure = [], []
+        sec_history, public_ip_exposure, sec_trend = [], [], []
     return render_template(
         "security.html",
         summary=summary,
@@ -660,6 +662,7 @@ def security_view():
         nsg_rules=nsg_rules,
         gateways=gateways,
         sec_history=sec_history,
+        sec_trend=sec_trend,
         public_ip_exposure=public_ip_exposure,
         sync=queries.last_sync_info(),
     )

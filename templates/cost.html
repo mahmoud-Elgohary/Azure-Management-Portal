@@ -126,6 +126,32 @@
 </div>
 {% endif %}
 
+<!-- KQL Cost Investigations -->
+<div class="card mb-4">
+  <div class="card-header"><i class="bi bi-terminal me-1"></i> Cost Investigations (KQL)</div>
+  <div class="card-body">
+    <p class="small text-muted mb-3">Query cost anomalies and usage patterns from Log Analytics.</p>
+    <div class="row g-2">
+      {% set cost_queries = [
+        ("Top Resource Cost (Resource Graph)", "Resources\n| where type == 'microsoft.compute/virtualmachines'\n| summarize count() by location\n| order by count_ desc"),
+        ("VM CPU vs Cost", "Perf\n| where ObjectName == 'Processor' and CounterName == '% Processor Time'\n| where TimeGenerated >= ago(7d)\n| summarize AvgCPU = avg(CounterValue) by Computer\n| order by AvgCPU asc\n| limit 20"),
+        ("Storage Access Patterns", "StorageBlobLogs\n| where TimeGenerated >= ago(1d)\n| summarize Requests = count(), FailedRequests = countif(StatusCode >= 400) by AccountName\n| order by Requests desc"),
+        ("Idle Resource Detection", "AzureActivity\n| where TimeGenerated >= ago(30d)\n| summarize LastActivity = max(TimeGenerated) by ResourceId\n| where LastActivity < ago(14d)\n| project ResourceId, LastActivity\n| order by LastActivity asc"),
+        ("Network Egress", "AzureMetrics\n| where MetricName == 'BytesSentRate' or MetricName == 'NetworkOut'\n| where TimeGenerated >= ago(1d)\n| summarize TotalBytes = sum(Total) by Resource\n| order by TotalBytes desc"),
+        ("Cost Anomaly (Daily)", "AzureDiagnostics\n| where Category == 'Administrative'\n| where TimeGenerated >= ago(30d)\n| summarize Operations = count() by bin(TimeGenerated, 1d)\n| order by TimeGenerated desc"),
+      ] %}
+      {% for name, query in cost_queries %}
+      <div class="col-md-4">
+        <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                onclick="sessionStorage.setItem('kql_prefill', {{ query | tojson }}); location.href='{{ url_for('kql_console') }}'">
+          <i class="bi bi-terminal me-1"></i>{{ name }}
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
 <!-- Details table -->
 <div class="card">
   <div class="card-header d-flex align-items-center gap-2">

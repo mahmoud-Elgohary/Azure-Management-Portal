@@ -8,11 +8,10 @@
 
 {% block content %}
 
-<!-- Security score + KPI row -->
+<!-- ── Row 1: Score + KPIs ──────────────────────────────────────────── -->
 <div class="row g-3 mb-4">
 
-  <!-- Security risk score -->
-  <div class="col-12 col-lg-4">
+  <div class="col-12 col-lg-3">
     <div class="card kpi-card h-100">
       <div class="d-flex align-items-center gap-3 mb-2">
         <div class="score-circle" style="background:{{ score.color or '#dc2626' }}">
@@ -29,7 +28,7 @@
         {% for factor, penalty in score.penalties.items() %}
         <div class="d-flex justify-content-between {% if penalty > 0 %}text-danger{% else %}text-success{% endif %} mb-1">
           <span>{{ factor.replace('_',' ').title() }}</span>
-          <span>{% if penalty > 0 %}-{{ penalty | int }} pts{% else %}✓ ok{% endif %}</span>
+          <span>{% if penalty > 0 %}-{{ penalty | int }} pts{% else %}<i class="bi bi-check-lg"></i> ok{% endif %}</span>
         </div>
         {% endfor %}
         {% endif %}
@@ -37,12 +36,11 @@
     </div>
   </div>
 
-  <!-- KPI cards -->
-  <div class="col-12 col-lg-8">
+  <div class="col-12 col-lg-5">
     <div class="row g-3 h-100">
       <div class="col-6">
         <div class="card kpi-card">
-          <div class="kpi-value {% if summary.open_inbound_rules %}text-danger{% else %}text-success{% endif %}">
+          <div class="kpi-value {% if summary.get('open_inbound_rules') %}text-danger{% else %}text-success{% endif %}">
             {{ summary.get('open_inbound_rules', 0) }}
           </div>
           <div class="kpi-label">Open Inbound Rules</div>
@@ -55,12 +53,12 @@
             {{ high_risk | length }}
           </div>
           <div class="kpi-label">High-Risk Ports Exposed</div>
-          <div class="kpi-sub">SSH/RDP/SMB/MSSQL…</div>
+          <div class="kpi-sub">SSH/RDP/SMB/DB…</div>
         </div>
       </div>
       <div class="col-6">
         <div class="card kpi-card">
-          <div class="kpi-value {% if summary.security_advisor_recs %}text-danger{% else %}text-success{% endif %}">
+          <div class="kpi-value {% if summary.get('security_advisor_recs') %}text-danger{% else %}text-success{% endif %}">
             {{ summary.get('security_advisor_recs', 0) }}
           </div>
           <div class="kpi-label">Security Advisor Recs</div>
@@ -69,7 +67,7 @@
       </div>
       <div class="col-6">
         <div class="card kpi-card">
-          <div class="kpi-value {% if score.gateways_no_waf %}text-warning{% else %}text-success{% endif %}">
+          <div class="kpi-value {% if score.get('gateways_no_waf') %}text-warning{% else %}text-success{% endif %}">
             {{ score.get('gateways_no_waf', 0) }}
           </div>
           <div class="kpi-label">Gateways Without WAF</div>
@@ -79,6 +77,113 @@
     </div>
   </div>
 
+  <!-- Security score trend chart -->
+  <div class="col-12 col-lg-4">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-graph-up me-1 text-primary"></i> Score Trend (30 days)
+      </div>
+      <div class="card-body d-flex flex-column justify-content-center">
+        {% if sec_history | length > 1 %}
+        <div style="height:130px"><canvas id="chart-security-trend"></canvas></div>
+        {% else %}
+        <div class="text-center text-muted small py-3">
+          <i class="bi bi-bar-chart-line fs-2 d-block mb-2 text-muted"></i>
+          Score trend tracked each sync.<br>Run a sync to start building history.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Compliance Checklist ───────────────────────────────────────────── -->
+<div class="row g-3 mb-3">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-clipboard-check me-2 text-primary"></i>Security Compliance Checklist
+        {% set checks_pass = (1 if not high_risk else 0) + (1 if not public_ip_exposure else 0) + (1 if score.get('gateways_no_waf',0)==0 else 0) + (1 if summary.get('security_advisor_recs',0)==0 else 0) %}
+        <span class="badge {% if checks_pass == 4 %}bg-success{% elif checks_pass >= 2 %}bg-warning text-dark{% else %}bg-danger{% endif %} ms-auto">
+          {{ checks_pass }}/4 checks passing
+        </span>
+      </div>
+      <div class="card-body">
+        <div class="row g-2">
+
+          <!-- Check 1: High-risk ports -->
+          <div class="col-md-6 col-lg-3">
+            <div class="p-3 rounded border {% if not high_risk %}border-success bg-success bg-opacity-5{% else %}border-danger bg-danger bg-opacity-5{% endif %}">
+              <div class="d-flex align-items-center gap-2 mb-1">
+                <i class="bi {% if not high_risk %}bi-check-circle-fill text-success{% else %}bi-x-circle-fill text-danger{% endif %} fs-5"></i>
+                <strong class="small">No High-Risk Ports</strong>
+              </div>
+              <div class="text-muted" style="font-size:.75rem">
+                {% if not high_risk %}
+                No SSH/RDP/DB ports open to Internet
+                {% else %}
+                {{ high_risk | length }} rule(s) expose critical services
+                {% endif %}
+              </div>
+            </div>
+          </div>
+
+          <!-- Check 2: Public IPs -->
+          <div class="col-md-6 col-lg-3">
+            <div class="p-3 rounded border {% if not public_ip_exposure %}border-success bg-success bg-opacity-5{% else %}border-warning bg-warning bg-opacity-5{% endif %}">
+              <div class="d-flex align-items-center gap-2 mb-1">
+                <i class="bi {% if not public_ip_exposure %}bi-check-circle-fill text-success{% else %}bi-exclamation-circle-fill text-warning{% endif %} fs-5"></i>
+                <strong class="small">Public IP Minimised</strong>
+              </div>
+              <div class="text-muted" style="font-size:.75rem">
+                {% if not public_ip_exposure %}
+                No VMs/NICs with direct public IPs
+                {% else %}
+                {{ public_ip_exposure | length }} public IP(s) directly exposed
+                {% endif %}
+              </div>
+            </div>
+          </div>
+
+          <!-- Check 3: WAF -->
+          <div class="col-md-6 col-lg-3">
+            <div class="p-3 rounded border {% if score.get('gateways_no_waf',0)==0 %}border-success bg-success bg-opacity-5{% else %}border-danger bg-danger bg-opacity-5{% endif %}">
+              <div class="d-flex align-items-center gap-2 mb-1">
+                <i class="bi {% if score.get('gateways_no_waf',0)==0 %}bi-check-circle-fill text-success{% else %}bi-x-circle-fill text-danger{% endif %} fs-5"></i>
+                <strong class="small">WAF on All Gateways</strong>
+              </div>
+              <div class="text-muted" style="font-size:.75rem">
+                {% if score.get('gateways_no_waf',0)==0 %}
+                All App Gateways have WAF enabled
+                {% else %}
+                {{ score.get('gateways_no_waf') }} gateway(s) missing WAF
+                {% endif %}
+              </div>
+            </div>
+          </div>
+
+          <!-- Check 4: Advisor -->
+          <div class="col-md-6 col-lg-3">
+            <div class="p-3 rounded border {% if summary.get('security_advisor_recs',0)==0 %}border-success bg-success bg-opacity-5{% else %}border-warning bg-warning bg-opacity-5{% endif %}">
+              <div class="d-flex align-items-center gap-2 mb-1">
+                <i class="bi {% if summary.get('security_advisor_recs',0)==0 %}bi-check-circle-fill text-success{% else %}bi-exclamation-circle-fill text-warning{% endif %} fs-5"></i>
+                <strong class="small">No Security Advisor Gaps</strong>
+              </div>
+              <div class="text-muted" style="font-size:.75rem">
+                {% if summary.get('security_advisor_recs',0)==0 %}
+                No open security recommendations
+                {% else %}
+                {{ summary.get('security_advisor_recs') }} open recommendation(s)
+                {% endif %}
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="row g-3">
@@ -88,12 +193,16 @@
     <div class="card {% if high_risk %}border-danger{% endif %}">
       <div class="card-header d-flex align-items-center gap-2">
         <i class="bi bi-exclamation-triangle {% if high_risk %}text-danger{% else %}text-success{% endif %} me-1"></i>
-        High-Risk Port Exposure (SSH · RDP · SMB · MSSQL · MySQL · PostgreSQL · Redis…)
+        High-Risk Port Exposure
         {% if high_risk %}
         <span class="badge bg-danger ms-auto">{{ high_risk | length }} rules</span>
         {% else %}
         <span class="badge bg-success ms-auto">Clean</span>
         {% endif %}
+        <button class="btn btn-sm btn-outline-secondary ms-{% if high_risk %}1{% else %}auto{% endif %}"
+                onclick="openKql('AzureActivity\n| where OperationNameValue contains \"MICROSOFT.NETWORK/NETWORKSECURITYGROUPS\"\n| where TimeGenerated >= ago(7d)\n| order by TimeGenerated desc\n| limit 50')">
+          <i class="bi bi-terminal me-1"></i>KQL: NSG Changes
+        </button>
       </div>
       <div class="card-body p-0">
         {% if high_risk %}
@@ -112,7 +221,10 @@
                   </span>
                 </td>
                 <td><code class="text-danger">{{ rule.risk_service }}</code></td>
-                <td><small>{{ rule.nsg_name }}</small></td>
+                <td>
+                  <a href="{{ url_for('nsg_detail', resource_group=rule.get('resource_group',''), nsg_name=rule.nsg_name) }}"
+                     class="text-link small">{{ rule.nsg_name }}</a>
+                </td>
                 <td>{{ rule.name }}</td>
                 <td><strong>{{ rule.dest_port }}</strong></td>
                 <td><small class="text-muted">{{ rule.source_prefix }}</small></td>
@@ -124,7 +236,7 @@
         </div>
         <div class="px-3 py-2 bg-danger bg-opacity-10 border-top small text-danger">
           <i class="bi bi-lightbulb me-1"></i>
-          <strong>Remediation:</strong> Restrict source IPs to specific CIDR ranges, deploy Azure Bastion for SSH/RDP, enable JIT VM Access, or move services behind a WAF/App Gateway.
+          <strong>Remediation:</strong> Restrict source IPs to specific CIDR ranges. Use Azure Bastion for SSH/RDP. Enable JIT VM Access. Move services behind WAF/App Gateway.
         </div>
         {% else %}
         <div class="p-3 text-center text-muted small">
@@ -136,7 +248,7 @@
     </div>
   </div>
 
-  <!-- Open inbound NSG rules -->
+  <!-- Open inbound rules + Security Advisor side by side -->
   <div class="col-lg-6">
     <div class="card h-100">
       <div class="card-header d-flex align-items-center gap-2">
@@ -146,7 +258,7 @@
       </div>
       <div class="card-body p-0">
         {% if open_ports %}
-        <div class="table-responsive" style="max-height:320px;overflow-y:auto">
+        <div class="table-responsive" style="max-height:300px;overflow-y:auto">
           <table class="table table-sm mb-0">
             <thead class="table-light sticky-top">
               <tr><th>NSG</th><th>Rule</th><th>Port</th><th>Priority</th><th>Protocol</th></tr>
@@ -174,7 +286,6 @@
     </div>
   </div>
 
-  <!-- Security Advisor recommendations -->
   <div class="col-lg-6">
     <div class="card h-100">
       <div class="card-header d-flex align-items-center gap-2">
@@ -184,7 +295,7 @@
       </div>
       <div class="card-body p-0">
         {% if advisor_security %}
-        <div class="table-responsive" style="max-height:320px;overflow-y:auto">
+        <div class="table-responsive" style="max-height:300px;overflow-y:auto">
           <table class="table table-sm mb-0">
             <thead class="table-light sticky-top">
               <tr><th>Impact</th><th>Recommendation</th><th>Solution</th></tr>
@@ -231,7 +342,10 @@
             <tbody>
               {% for gw in gateways %}
               <tr {% if not gw.waf_enabled %}class="table-warning"{% endif %}>
-                <td class="fw-500">{{ gw.name }}</td>
+                <td class="fw-500">
+                  <a href="{{ url_for('appgateway_detail', resource_group=gw.resource_group, gw_name=gw.name) }}"
+                     class="text-decoration-none">{{ gw.name }}</a>
+                </td>
                 <td><small>{{ gw.resource_group }}</small></td>
                 <td><code>{{ gw.sku_tier or gw.sku_name or '—' }}</code></td>
                 <td>
@@ -258,13 +372,64 @@
   </div>
   {% endif %}
 
+  <!-- Public IP Exposure -->
+  {% if public_ip_exposure %}
+  <div class="col-12">
+    <div class="card {% if public_ip_exposure | length > 5 %}border-warning{% endif %}">
+      <div class="card-header d-flex align-items-center gap-2">
+        <i class="bi bi-globe {% if public_ip_exposure | length > 5 %}text-warning{% else %}text-muted{% endif %} me-1"></i>
+        Public IP Exposure
+        <span class="badge {% if public_ip_exposure | length > 5 %}bg-warning text-dark{% else %}bg-secondary{% endif %} ms-auto">{{ public_ip_exposure | length }} public IPs</span>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive" style="max-height:260px;overflow-y:auto">
+          <table class="table table-sm mb-0">
+            <thead class="table-light sticky-top">
+              <tr><th>IP Address</th><th>Name</th><th>Allocation</th><th>Attached NIC</th><th>VM</th><th>Power State</th><th>RG</th></tr>
+            </thead>
+            <tbody>
+              {% for pip in public_ip_exposure %}
+              <tr>
+                <td><strong class="text-danger">{{ pip.ip_address or '—' }}</strong></td>
+                <td><small>{{ pip.name }}</small></td>
+                <td>
+                  <span class="badge {% if pip.allocation_method == 'Static' %}bg-warning text-dark{% else %}bg-secondary{% endif %}" style="font-size:.7rem">
+                    {{ pip.allocation_method or '—' }}
+                  </span>
+                </td>
+                <td><small class="text-muted">{{ pip.nic_name or '—' }}</small></td>
+                <td>
+                  {% if pip.vm_name %}
+                  <a href="/vms/{{ pip.vm_rg }}/{{ pip.vm_name }}" class="text-link small">{{ pip.vm_name }}</a>
+                  {% else %}<small class="text-muted">—</small>{% endif %}
+                </td>
+                <td>
+                  {% if pip.power_state %}
+                  <span class="badge {% if pip.power_state == 'running' %}bg-success{% else %}bg-secondary{% endif %}" style="font-size:.7rem">{{ pip.power_state }}</span>
+                  {% else %}—{% endif %}
+                </td>
+                <td><small class="text-muted">{{ pip.resource_group or '—' }}</small></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="px-3 py-2 bg-info bg-opacity-10 border-top small text-info">
+          <i class="bi bi-lightbulb me-1"></i>
+          <strong>Tip:</strong> Use Azure Bastion for SSH/RDP access. Remove unused public IPs. Load-balance behind App Gateway with WAF.
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <!-- All NSG rules -->
   <div class="col-12">
     <div class="card">
       <div class="card-header d-flex align-items-center gap-2">
         <i class="bi bi-diagram-2 me-1"></i> All NSG Security Rules
         <span class="badge bg-secondary ms-auto">{{ nsg_rules | length }}</span>
-        <div class="ms-2 d-flex gap-1">
+        <div class="ms-2 d-flex gap-1 flex-wrap">
           <button class="btn btn-sm btn-outline-secondary" onclick="filterRules('all')">All</button>
           <button class="btn btn-sm btn-outline-danger" onclick="filterRules('Inbound')">Inbound</button>
           <button class="btn btn-sm btn-outline-primary" onclick="filterRules('Outbound')">Outbound</button>
@@ -315,96 +480,46 @@
     </div>
   </div>
 
-</div>
-
-<!-- ── Additional Security Sections ──────────────────────────────── -->
-<div class="row g-3 mt-1">
-  <!-- Public IP Exposure -->
-  {% if public_ip_exposure %}
-  <div class="col-12">
-    <div class="card {% if public_ip_exposure | length > 5 %}border-warning{% endif %}">
-      <div class="card-header d-flex align-items-center gap-2">
-        <i class="bi bi-globe {% if public_ip_exposure | length > 5 %}text-warning{% else %}text-muted{% endif %} me-1"></i>
-        Public IP Exposure
-        <span class="badge {% if public_ip_exposure | length > 5 %}bg-warning text-dark{% else %}bg-secondary{% endif %} ms-auto">{{ public_ip_exposure | length }} public IPs</span>
-      </div>
-      <div class="card-body p-0">
-        <div class="table-responsive" style="max-height:260px;overflow-y:auto">
-          <table class="table table-sm mb-0">
-            <thead class="table-light sticky-top">
-              <tr><th>IP Address</th><th>Name</th><th>Allocation</th><th>Attached NIC</th><th>VM</th><th>Power State</th><th>RG</th></tr>
-            </thead>
-            <tbody>
-              {% for pip in public_ip_exposure %}
-              <tr>
-                <td><strong class="text-danger">{{ pip.ip_address or '—' }}</strong></td>
-                <td><small>{{ pip.name }}</small></td>
-                <td>
-                  <span class="badge {% if pip.allocation_method == 'Static' %}bg-warning text-dark{% else %}bg-secondary{% endif %}" style="font-size:.7rem">
-                    {{ pip.allocation_method or '—' }}
-                  </span>
-                </td>
-                <td><small class="text-muted">{{ pip.nic_name or '—' }}</small></td>
-                <td>
-                  {% if pip.vm_name %}
-                  <a href="/vms/{{ pip.vm_rg }}/{{ pip.vm_name }}" class="text-link small">{{ pip.vm_name }}</a>
-                  {% else %}<small class="text-muted">—</small>{% endif %}
-                </td>
-                <td>
-                  {% if pip.power_state %}
-                  <span class="badge {% if pip.power_state == 'running' %}bg-success{% else %}bg-secondary{% endif %}" style="font-size:.7rem">{{ pip.power_state }}</span>
-                  {% else %}—{% endif %}
-                </td>
-                <td><small class="text-muted">{{ pip.resource_group or '—' }}</small></td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        <div class="px-3 py-2 bg-info bg-opacity-10 border-top small text-info">
-          <i class="bi bi-lightbulb me-1"></i>
-          <strong>Tip:</strong> Review each public IP. Use Azure Bastion for SSH/RDP access instead of direct public IPs. Remove unused public IPs to reduce attack surface.
-        </div>
-      </div>
-    </div>
-  </div>
-  {% endif %}
-
-  <!-- Security trend chart -->
-  {% if sec_history | length > 1 %}
+  <!-- KQL Investigations -->
   <div class="col-12">
     <div class="card">
-      <div class="card-header d-flex align-items-center">
-        <i class="bi bi-graph-up me-1 text-primary"></i> Security Score Trend
-        <span class="text-muted small ms-2">(based on resource count snapshots)</span>
-      </div>
+      <div class="card-header"><i class="bi bi-terminal me-1"></i> Security & Identity Investigations (KQL)</div>
       <div class="card-body">
-        <div style="height:160px"><canvas id="chart-security-trend"></canvas></div>
-      </div>
-    </div>
-  </div>
-  {% endif %}
+        <p class="small text-muted mb-3">Run security queries directly against Log Analytics. Requires workspace configuration.</p>
 
-  <!-- KQL Investigation links -->
-  <div class="col-12">
-    <div class="card">
-      <div class="card-header"><i class="bi bi-terminal me-1"></i> Security Investigations (KQL)</div>
-      <div class="card-body">
-        <p class="small text-muted mb-3">Run security queries directly against Log Analytics. Requires Log Analytics workspace configuration.</p>
-        <div class="row g-2">
-          {% set sec_queries = [
+        <div class="mb-2 small fw-500 text-muted">Identity &amp; Access</div>
+        <div class="row g-2 mb-3">
+          {% set identity_queries = [
             ("Failed Sign-ins", "SigninLogs\n| where ResultType != 0\n| where TimeGenerated >= ago(1d)\n| summarize count() by UserPrincipalName, ResultDescription\n| order by count_ desc\n| limit 50"),
             ("Brute-Force Detection", "SigninLogs\n| where ResultType != 0\n| where TimeGenerated >= ago(1h)\n| summarize FailedAttempts = count() by IPAddress, UserPrincipalName\n| where FailedAttempts >= 5\n| order by FailedAttempts desc"),
             ("Admin Group Changes", "AuditLogs\n| where OperationName contains 'member'\n| where TargetResources[0].type == 'Group'\n| project TimeGenerated, InitiatedBy, TargetResources, OperationName, Result\n| order by TimeGenerated desc"),
-            ("Role Assignments", "AzureActivity\n| where OperationNameValue == 'MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/WRITE'\n| project TimeGenerated, Caller, ResourceGroup, Properties\n| order by TimeGenerated desc | limit 50"),
-            ("NSG Denied Flows", "AzureNetworkAnalytics_CL\n| where SubType_s == 'FlowLog'\n| where FlowStatus_s == 'D'\n| summarize Denied = count() by SrcIP_s, DestIP_s\n| order by Denied desc | limit 50"),
-            ("Security Alerts", "SecurityAlert\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, AlertName, Severity, Entities\n| order by TimeGenerated desc"),
+            ("Role Assignments (7d)", "AzureActivity\n| where OperationNameValue == 'MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/WRITE'\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, ResourceGroup, Properties\n| order by TimeGenerated desc"),
+            ("Privileged Account Usage", "SigninLogs\n| where TimeGenerated >= ago(1d)\n| where UserType == 'Member'\n| join kind=inner (\n    IdentityInfo\n    | where AssignedRoles contains 'GlobalAdministrator'\n    | distinct AccountUPN\n) on $left.UserPrincipalName == $right.AccountUPN\n| project TimeGenerated, UserPrincipalName, AppDisplayName, IPAddress, LocationDetails\n| order by TimeGenerated desc"),
+            ("MFA Not Registered", "UserAuthenticationMethod\n| where AuthType == 'password'\n| summarize count() by UserPrincipalName\n| order by count_ desc"),
           ] %}
-          {% for name, query in sec_queries %}
+          {% for name, query in identity_queries %}
           <div class="col-md-4">
-            <button class="btn btn-sm btn-outline-secondary w-100 text-start"
-                    onclick="sessionStorage.setItem('kql_prefill', {{ query | tojson }}); location.href='{{ url_for('kql_console') }}';">
-              <i class="bi bi-terminal me-1"></i>{{ name }}
+            <button class="btn btn-sm btn-outline-secondary w-100 text-start" onclick="openKql({{ query | tojson }})">
+              <i class="bi bi-person-lock me-1"></i>{{ name }}
+            </button>
+          </div>
+          {% endfor %}
+        </div>
+
+        <div class="mb-2 small fw-500 text-muted">Network &amp; Threat Detection</div>
+        <div class="row g-2">
+          {% set threat_queries = [
+            ("NSG Denied Flows", "AzureNetworkAnalytics_CL\n| where SubType_s == 'FlowLog'\n| where FlowStatus_s == 'D'\n| where TimeGenerated >= ago(1d)\n| summarize Denied = count() by SrcIP_s, DestIP_s, DestPort_d\n| order by Denied desc\n| limit 50"),
+            ("Security Alerts", "SecurityAlert\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, AlertName, Severity, Entities\n| order by TimeGenerated desc"),
+            ("Anomalous Login Locations", "SigninLogs\n| where TimeGenerated >= ago(7d)\n| where RiskState == 'atRisk' or RiskLevelDuringSignIn in ('medium','high')\n| project TimeGenerated, UserPrincipalName, IPAddress, LocationDetails, RiskLevelDuringSignIn\n| order by TimeGenerated desc"),
+            ("Impossible Travel", "SigninLogs\n| where TimeGenerated >= ago(7d)\n| where RiskEventTypes_V2 contains 'impossibleTravel'\n| project TimeGenerated, UserPrincipalName, IPAddress, LocationDetails\n| order by TimeGenerated desc"),
+            ("Malicious IP Connections", "AzureNetworkAnalytics_CL\n| where SubType_s == 'FlowLog'\n| where MaliciousFlow_s == 'true'\n| where TimeGenerated >= ago(1d)\n| project TimeGenerated, SrcIP_s, DestIP_s, DestPort_d\n| order by TimeGenerated desc"),
+            ("Defender for Cloud Alerts", "SecurityAlert\n| where TimeGenerated >= ago(7d)\n| where ProviderName contains 'ASC'\n| project TimeGenerated, AlertName, Severity, ResourceId\n| order by Severity asc, TimeGenerated desc"),
+          ] %}
+          {% for name, query in threat_queries %}
+          <div class="col-md-4">
+            <button class="btn btn-sm btn-outline-secondary w-100 text-start" onclick="openKql({{ query | tojson }})">
+              <i class="bi bi-shield-exclamation me-1"></i>{{ name }}
             </button>
           </div>
           {% endfor %}
@@ -426,11 +541,18 @@ function filterRules(filter) {
   });
 }
 
+function openKql(query) {
+  sessionStorage.setItem('kql_prefill', query);
+  location.href = '{{ url_for("kql_console") }}';
+}
+
 {% if sec_history | length > 1 %}
 (function() {
   const history = {{ sec_history | tojson }};
-  const labels  = history.map(h => h.date);
-  const scores  = history.map(h => h.score);
+  /* sec_history may come from security_score_history (has .score + .snapshot_date)
+     or from the legacy get_security_history (has .score + .date) */
+  const labels = history.map(h => h.snapshot_date || h.date || '');
+  const scores = history.map(h => h.score || 0);
   const ctx = document.getElementById('chart-security-trend');
   if (!ctx) return;
   new Chart(ctx, {
@@ -444,7 +566,7 @@ function filterRules(filter) {
         backgroundColor: 'rgba(0,120,212,.08)',
         fill: true,
         tension: 0.3,
-        pointRadius: 3,
+        pointRadius: labels.length > 15 ? 0 : 3,
         pointBackgroundColor: scores.map(s => s >= 75 ? '#16a34a' : s >= 50 ? '#d97706' : '#dc2626'),
       }]
     },
@@ -452,8 +574,8 @@ function filterRules(filter) {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false } },
       scales: {
-        x: { ticks: { maxTicksLimit: 10, font: { size: 10 } } },
-        y: { min: 0, max: 100, ticks: { font: { size: 10 }, callback: v => v + '/100' } }
+        x: { ticks: { maxTicksLimit: 8, font: { size: 9 } } },
+        y: { min: 0, max: 100, ticks: { font: { size: 9 }, callback: v => v + '/100' } }
       }
     }
   });
