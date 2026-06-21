@@ -142,4 +142,30 @@
   </table>
 </div>
 {% endif %}
+
+<!-- KQL Investigation -->
+<div class="card mt-4">
+  <div class="card-header"><i class="bi bi-terminal me-1"></i> SQL Investigations (KQL)</div>
+  <div class="card-body">
+    <p class="small text-muted mb-3">Query SQL Server activity, performance, and security from Log Analytics.</p>
+    <div class="row g-2">
+      {% set sql_queries = [
+        ("Slow Queries (>5s)", "AzureDiagnostics\n| where Category == 'SQLSecurityAuditEvents' or Category == 'QueryStoreRuntimeStatistics'\n| where TimeGenerated >= ago(1d)\n| where duration_s > 5\n| project TimeGenerated, Resource, database_name_s, statement_s, duration_s\n| order by duration_s desc\n| limit 50"),
+        ("Failed Logins (24h)", "AzureDiagnostics\n| where Category == 'SQLSecurityAuditEvents'\n| where action_name_s == 'DATABASE AUTHENTICATION FAILED'\n| where TimeGenerated >= ago(1d)\n| summarize FailCount = count() by client_ip_s, server_instance_name_s\n| order by FailCount desc\n| limit 20"),
+        ("DTU / CPU Usage (1h)", "AzureMetrics\n| where ResourceType == 'MICROSOFT.SQL/SERVERS/DATABASES'\n| where MetricName in ('dtu_consumption_percent', 'cpu_percent')\n| where TimeGenerated >= ago(1h)\n| summarize AvgPct = avg(Average) by Resource, MetricName, bin(TimeGenerated, 5m)\n| order by TimeGenerated desc"),
+        ("Deadlocks (7d)", "AzureDiagnostics\n| where Category == 'Deadlocks'\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Resource, database_name_s, deadlock_xml_s\n| order by TimeGenerated desc"),
+        ("Storage % (1d)", "AzureMetrics\n| where ResourceType == 'MICROSOFT.SQL/SERVERS/DATABASES'\n| where MetricName == 'storage_percent'\n| where TimeGenerated >= ago(1d)\n| summarize MaxPct = max(Maximum) by Resource\n| where MaxPct > 70\n| order by MaxPct desc"),
+        ("Firewall Rule Changes (7d)", "AzureActivity\n| where OperationNameValue contains 'MICROSOFT.SQL/SERVERS/FIREWALLRULES'\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, ResourceGroup, OperationNameValue, ResourceId\n| order by TimeGenerated desc"),
+      ] %}
+      {% for name, query in sql_queries %}
+      <div class="col-md-4">
+        <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                onclick="sessionStorage.setItem('kql_prefill', {{ query | tojson }}); location.href='{{ url_for('kql_console') }}'">
+          <i class="bi bi-terminal me-1"></i>{{ name }}
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
 {% endblock %}

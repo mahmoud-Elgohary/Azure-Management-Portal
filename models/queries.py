@@ -168,7 +168,7 @@ def get_cost_daily(subscription_id: str = None) -> list[dict]:
 
 
 def get_mtd_total() -> float:
-    month_start = datetime.now(timezone.utc).strftime("%Y-%m-01")
+    month_start = datetime.now(timezone.utc).strftime("%Y%m01")
     conn = get_db()
     row = conn.execute(
         "SELECT SUM(cost) AS total FROM cost_daily WHERE date >= ?", (month_start,)
@@ -661,7 +661,7 @@ def get_cost_trend_by_date() -> list[dict]:
 
 def get_cost_by_resource_group_mtd() -> list[dict]:
     """MTD cost per resource group, current month only."""
-    month_start = datetime.now(timezone.utc).strftime("%Y-%m-01")
+    month_start = datetime.now(timezone.utc).strftime("%Y%m01")
     conn = get_db()
     rows = conn.execute(
         "SELECT resource_group, SUM(cost) AS total, currency "

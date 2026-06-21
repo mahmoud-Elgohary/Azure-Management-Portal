@@ -134,6 +134,32 @@
 
 {% endif %} {# end if snapshots #}
 
+<!-- KQL Investigation -->
+<div class="card mt-4">
+  <div class="card-header"><i class="bi bi-terminal me-1"></i> Change & Audit Investigations (KQL)</div>
+  <div class="card-body">
+    <p class="small text-muted mb-3">Query Azure Activity Log for resource changes and configuration drift.</p>
+    <div class="row g-2">
+      {% set change_queries = [
+        ("All Resource Creates (7d)", "AzureActivity\n| where OperationNameValue endswith '/WRITE'\n| where ActivityStatus == 'Succeeded'\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, ResourceGroup, OperationNameValue, ResourceId\n| order by TimeGenerated desc\n| limit 50"),
+        ("Resource Deletions (7d)", "AzureActivity\n| where OperationNameValue endswith '/DELETE'\n| where ActivityStatus == 'Succeeded'\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, ResourceGroup, OperationNameValue, ResourceId\n| order by TimeGenerated desc"),
+        ("Role Assignments Changed", "AzureActivity\n| where OperationNameValue contains 'MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS'\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, ResourceGroup, OperationNameValue\n| order by TimeGenerated desc"),
+        ("Policy Changes (30d)", "AzureActivity\n| where OperationNameValue contains 'MICROSOFT.AUTHORIZATION/POLICYASSIGNMENTS'\n| where TimeGenerated >= ago(30d)\n| project TimeGenerated, Caller, ResourceGroup, OperationNameValue\n| order by TimeGenerated desc"),
+        ("Failed Operations (24h)", "AzureActivity\n| where ActivityStatus == 'Failed'\n| where TimeGenerated >= ago(1d)\n| summarize FailCount = count() by Caller, OperationNameValue\n| order by FailCount desc\n| limit 20"),
+        ("Changes by Caller", "AzureActivity\n| where OperationNameValue endswith '/WRITE' or OperationNameValue endswith '/DELETE'\n| where ActivityStatus == 'Succeeded'\n| where TimeGenerated >= ago(7d)\n| summarize Changes = count() by Caller\n| order by Changes desc\n| limit 20"),
+      ] %}
+      {% for name, query in change_queries %}
+      <div class="col-md-4">
+        <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                onclick="sessionStorage.setItem('kql_prefill', {{ query | tojson }}); location.href='{{ url_for('kql_console') }}'">
+          <i class="bi bi-terminal me-1"></i>{{ name }}
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block head %}

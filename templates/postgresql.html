@@ -148,4 +148,30 @@
 </div>
 {% endif %}
 
+<!-- KQL Investigation -->
+<div class="card mt-4">
+  <div class="card-header"><i class="bi bi-terminal me-1"></i> PostgreSQL Investigations (KQL)</div>
+  <div class="card-body">
+    <p class="small text-muted mb-3">Query PostgreSQL activity and performance across all servers.</p>
+    <div class="row g-2">
+      {% set pg_queries = [
+        ("Active Connections (1h)", "AzureDiagnostics\n| where Category == 'PostgreSQLLogs'\n| where TimeGenerated >= ago(1h)\n| where Message contains 'connection received'\n| summarize Connections = count() by Resource\n| order by Connections desc"),
+        ("Failed Auth Attempts", "AzureDiagnostics\n| where Category == 'PostgreSQLLogs'\n| where TimeGenerated >= ago(1d)\n| where Message contains 'authentication failed'\n| project TimeGenerated, Resource, Message\n| order by TimeGenerated desc\n| limit 50"),
+        ("Long Running Queries (>30s)", "AzureDiagnostics\n| where Category == 'PostgreSQLLogs'\n| where TimeGenerated >= ago(1d)\n| where Message contains 'duration:'\n| extend DurMs = toint(extract('duration: ([0-9]+)', 1, Message))\n| where DurMs > 30000\n| project TimeGenerated, Resource, DurMs, Message\n| order by DurMs desc"),
+        ("Server Errors (24h)", "AzureDiagnostics\n| where Category == 'PostgreSQLLogs'\n| where TimeGenerated >= ago(1d)\n| where Message startswith 'ERROR' or Message startswith 'FATAL'\n| summarize ErrorCount = count() by Resource, bin(TimeGenerated, 1h)\n| order by TimeGenerated desc"),
+        ("Storage Usage Trend", "AzureMetrics\n| where ResourceType == 'MICROSOFT.DBFORPOSTGRESQL/FLEXIBLESERVERS'\n| where MetricName == 'storage_used'\n| where TimeGenerated >= ago(7d)\n| summarize MaxGB = max(Maximum)/1073741824 by Resource, bin(TimeGenerated, 1d)\n| order by TimeGenerated desc"),
+        ("CPU % per Server (1d)", "AzureMetrics\n| where ResourceType == 'MICROSOFT.DBFORPOSTGRESQL/FLEXIBLESERVERS'\n| where MetricName == 'cpu_percent'\n| where TimeGenerated >= ago(1d)\n| summarize AvgCPU = avg(Average) by Resource\n| order by AvgCPU desc"),
+      ] %}
+      {% for name, query in pg_queries %}
+      <div class="col-md-4">
+        <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                onclick="sessionStorage.setItem('kql_prefill', {{ query | tojson }}); location.href='{{ url_for('kql_console') }}'">
+          <i class="bi bi-terminal me-1"></i>{{ name }}
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
 {% endblock %}

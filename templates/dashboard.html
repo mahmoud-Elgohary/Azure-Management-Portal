@@ -12,6 +12,19 @@
 {% set sec = security_score or {} %}
 {% set sec_score = sec.score | default(0) | int %}
 
+{% if cost_anomalies %}
+<div class="alert alert-warning alert-dismissible fade show mb-3 py-2" role="alert">
+  <i class="bi bi-exclamation-triangle-fill me-2"></i>
+  <strong>Cost spike detected:</strong>
+  {% for a in cost_anomalies[:3] %}
+    <span class="ms-2 small">{{ a.date }}: <strong>{{ currency or '€' }}{{ "%.0f"|format(a.cost) }}</strong> ({{ ((a.cost/a.avg - 1)*100)|int }}% above avg)</span>{% if not loop.last %} ·{% endif %}
+  {% endfor %}
+  {% if cost_anomalies|length > 3 %}<span class="ms-1 small text-muted">+{{ cost_anomalies|length - 3 }} more</span>{% endif %}
+  <a href="{{ url_for('cost_view') }}" class="btn btn-sm btn-warning ms-3 py-0">View</a>
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
 <!-- ── Row 1: Primary Operational KPIs ──────────────────────────────── -->
 <div class="row g-3 mb-3">
 
@@ -480,5 +493,8 @@
     });
   } catch(e) { console.warn('Security trend chart failed:', e); }
 })();
+
+/* Auto-refresh every 5 minutes */
+setTimeout(() => location.reload(), 5 * 60 * 1000);
 </script>
 {% endblock %}

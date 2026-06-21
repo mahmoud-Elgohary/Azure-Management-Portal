@@ -179,7 +179,9 @@ def auth_logout():
 @login_required
 def dashboard():
     try:
+        from azure_client.cost import detect_anomalies
         stats = queries.dashboard_stats()
+        daily = queries.get_cost_daily()
         ctx = {
             "sync": queries.last_sync_info(),
             "stats": stats,
@@ -193,10 +195,12 @@ def dashboard():
             "security_score": queries.calculate_security_score(),
             "top_risks": queries.get_top_security_risks(8),
             "recent_changes": queries.get_recent_changes_summary(),
+            "cost_anomalies": detect_anomalies(daily),
+            "currency": queries.get_cost_currency(),
         }
     except Exception as exc:
         flash(_rbac_error(exc), "danger")
-        ctx = {"sync": queries.last_sync_info(), "stats": {}, "mtd_cost": 0, "budget": config.MONTHLY_BUDGET}
+        ctx = {"sync": queries.last_sync_info(), "stats": {}, "mtd_cost": 0, "budget": config.MONTHLY_BUDGET, "cost_anomalies": [], "currency": "EUR"}
     return render_template("dashboard.html", **ctx)
 
 
