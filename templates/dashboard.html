@@ -195,6 +195,39 @@
 
 </div>
 
+<!-- ── Action Required ────────────────────────────────────────────────── -->
+{% set actions = [] %}
+{% if s.open_ports %}{% set _ = actions.append({'icon': 'bi-door-open', 'color': 'danger', 'label': s.open_ports ~ ' open inbound port' ~ ('s' if s.open_ports != 1 else ''), 'url': url_for('nsgs_view'), 'detail': 'Internet-exposed NSG rules'}) %}{% endif %}
+{% if s.get('backup_failed') %}{% set _ = actions.append({'icon': 'bi-shield-x', 'color': 'danger', 'label': s.backup_failed ~ ' backup failure' ~ ('s' if s.backup_failed != 1 else ''), 'url': url_for('backup_view'), 'detail': 'Backup items not completed'}) %}{% endif %}
+{% if s.get('vm_stopped') %}{% set _ = actions.append({'icon': 'bi-stop-circle', 'color': 'warning', 'label': s.vm_stopped ~ ' VM' ~ ('s' if s.vm_stopped != 1 else '') ~ ' stopped (still billed)', 'url': url_for('vms', state='stopped'), 'detail': 'Stopped but not deallocated'}) %}{% endif %}
+{% if s.get('advisor_high') %}{% set _ = actions.append({'icon': 'bi-exclamation-triangle', 'color': 'warning', 'label': s.advisor_high ~ ' high-impact advisor rec' ~ ('s' if s.advisor_high != 1 else ''), 'url': url_for('advisor_view', impact='High'), 'detail': 'Azure Advisor findings'}) %}{% endif %}
+{% if s.get('unavailable') %}{% set _ = actions.append({'icon': 'bi-heartbreak', 'color': 'danger', 'label': s.unavailable ~ ' resource' ~ ('s' if s.unavailable != 1 else '') ~ ' unavailable', 'url': url_for('health_view'), 'detail': 'Resource Health degraded'}) %}{% endif %}
+{% if rsv.get('expiring_soon') %}{% set _ = actions.append({'icon': 'bi-bookmark-x', 'color': 'warning', 'label': rsv.expiring_soon ~ ' reservation' ~ ('s' if rsv.expiring_soon != 1 else '') ~ ' expiring ≤30d', 'url': url_for('reservations_view'), 'detail': 'Reservation renewal needed'}) %}{% endif %}
+{% if actions %}
+<div class="card mb-3 border-danger border-opacity-25">
+  <div class="card-header d-flex align-items-center py-2">
+    <i class="bi bi-exclamation-circle text-danger me-2"></i>
+    <strong>Action Required</strong>
+    <span class="badge bg-danger ms-2">{{ actions | length }}</span>
+    <small class="text-muted ms-auto">Items needing attention</small>
+  </div>
+  <div class="card-body p-0">
+    <div class="list-group list-group-flush">
+      {% for a in actions %}
+      <a href="{{ a.url }}" class="list-group-item list-group-item-action d-flex align-items-center gap-3 py-2">
+        <i class="bi {{ a.icon }} text-{{ a.color }} fs-5 flex-shrink-0"></i>
+        <div class="flex-grow-1">
+          <div class="fw-500 small">{{ a.label }}</div>
+          <div class="text-muted" style="font-size:.75rem">{{ a.detail }}</div>
+        </div>
+        <i class="bi bi-chevron-right text-muted" style="font-size:.75rem"></i>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <!-- ── Row 2b: Reservations + DevOps ──────────────────────────────────── -->
 {% if rsv or dvo %}
 <div class="row g-3 mb-3">

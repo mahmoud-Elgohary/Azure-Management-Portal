@@ -31,6 +31,28 @@
   {% endfor %}
 </div>
 
+<!-- Impact breakdown chart -->
+{% if recs %}
+<div class="row g-3 mb-3">
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header py-2"><i class="bi bi-bar-chart me-1"></i> Impact Breakdown</div>
+      <div class="card-body d-flex align-items-center">
+        <div style="height:120px;width:100%"><canvas id="chart-impact"></canvas></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-8">
+    <div class="card h-100">
+      <div class="card-header py-2"><i class="bi bi-pie-chart me-1"></i> By Category</div>
+      <div class="card-body d-flex align-items-center">
+        <div style="height:120px;width:100%"><canvas id="chart-category"></canvas></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <!-- Impact filter + count -->
 <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
   <span class="text-muted small">Impact:</span>
@@ -127,4 +149,68 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block head %}
+{% if recs %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if recs %}
+<script>
+(function() {
+  const recs = {{ recs | tojson }};
+  const impactCounts = { High: 0, Medium: 0, Low: 0 };
+  const catCounts = {};
+  recs.forEach(r => {
+    if (r.impact in impactCounts) impactCounts[r.impact]++;
+    catCounts[r.category] = (catCounts[r.category] || 0) + 1;
+  });
+
+  new Chart(document.getElementById('chart-impact'), {
+    type: 'bar',
+    data: {
+      labels: ['High', 'Medium', 'Low'],
+      datasets: [{
+        data: [impactCounts.High, impactCounts.Medium, impactCounts.Low],
+        backgroundColor: ['#dc2626', '#f59e0b', '#6b7280'],
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { font: { size: 10 }, stepSize: 1 }, grid: { display: false } },
+        y: { ticks: { font: { size: 10 } } }
+      }
+    }
+  });
+
+  const catColors = { Cost: '#f59e0b', Security: '#dc2626', Reliability: '#2563eb', Performance: '#0891b2', OperationalExcellence: '#6b7280' };
+  const cats = Object.keys(catCounts);
+  new Chart(document.getElementById('chart-category'), {
+    type: 'bar',
+    data: {
+      labels: cats,
+      datasets: [{
+        data: cats.map(c => catCounts[c]),
+        backgroundColor: cats.map(c => catColors[c] || '#9ca3af'),
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { font: { size: 9 } }, grid: { display: false } },
+        y: { ticks: { font: { size: 10 }, stepSize: 1 } }
+      }
+    }
+  });
+})();
+</script>
+{% endif %}
 {% endblock %}

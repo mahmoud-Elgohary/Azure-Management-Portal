@@ -1143,15 +1143,24 @@ def dashboard_stats() -> dict:
         waf_row = conn.execute(
             "SELECT COUNT(*) AS cnt, SUM(waf_enabled) AS waf_on FROM app_gateways"
         ).fetchone()
+        vm_stopped = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM vms WHERE power_state='stopped'"
+        ).fetchone()["cnt"]
+        backup_failed = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM backup_status "
+            "WHERE last_backup_status NOT IN ('Completed','IRPending')"
+        ).fetchone()["cnt"]
         return {
             "vm_total": vm_total,
             "vm_running": vm_running,
+            "vm_stopped": vm_stopped,
             "sql_db_total": sql_db_total,
             "pg_total": pg_total,
             "open_ports": open_ports_count,
             "advisor_high": advisor_high,
             "backup_ok": backup_ok,
             "backup_total": backup_total,
+            "backup_failed": backup_failed,
             "unavailable": unavailable,
             "public_ips": pip_count,
             "failed_activity_24h": failed_activity,

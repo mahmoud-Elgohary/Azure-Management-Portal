@@ -178,18 +178,33 @@
   </div>
   <div class="card-body p-0">
     {% if daily %}
+    {% set anomaly_dates = anomalies | map(attribute='date') | list %}
     <div class="table-responsive" style="max-height:420px;overflow-y:auto">
       <table class="table table-sm table-hover mb-0">
         <thead class="table-dark sticky-top">
-          <tr><th>Date</th><th>Resource Group</th><th>Cost</th><th>Currency</th></tr>
+          <tr>
+            <th>Date</th><th>Resource Group</th><th>Cost</th><th>Currency</th>
+            {% if anomaly_dates %}<th>Flag</th>{% endif %}
+          </tr>
         </thead>
         <tbody>
           {% for row in daily | sort(attribute='date', reverse=True) %}
-          <tr>
-            <td>{{ row.date }}</td>
+          {% set is_anomaly = row.date in anomaly_dates %}
+          <tr class="{% if is_anomaly %}table-danger{% endif %}">
+            <td>
+              {% if is_anomaly %}<i class="bi bi-exclamation-triangle text-danger me-1" title="Cost anomaly"></i>{% endif %}
+              {{ row.date }}
+            </td>
             <td>{{ row.resource_group or '(unassigned)' }}</td>
             <td class="fw-500">{{ currency }}{{ "%.4f"|format(row.cost) }}</td>
             <td><small class="text-muted">{{ row.currency }}</small></td>
+            {% if anomaly_dates %}
+            <td>
+              {% if is_anomaly %}
+              <span class="badge bg-danger" style="font-size:.68rem">Spike</span>
+              {% endif %}
+            </td>
+            {% endif %}
           </tr>
           {% endfor %}
         </tbody>

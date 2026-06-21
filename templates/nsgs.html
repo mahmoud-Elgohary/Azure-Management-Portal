@@ -59,15 +59,15 @@
 {% if nsgs %}
 <div class="card">
   <div class="table-responsive">
-    <table class="table table-hover table-sm align-middle mb-0">
+    <table class="table table-hover table-sm align-middle mb-0" id="nsg-table">
       <thead class="table-dark">
         <tr>
-          <th>Name</th>
-          <th>Resource Group</th>
-          <th>Location</th>
-          <th class="text-center">Rules</th>
-          <th class="text-center">Inbound Allow</th>
-          <th class="text-center">Open Inbound</th>
+          <th onclick="sortNSGs(0)" style="cursor:pointer">Name <i class="bi bi-arrow-down-up text-muted" style="font-size:.7rem"></i></th>
+          <th onclick="sortNSGs(1)" style="cursor:pointer">Resource Group <i class="bi bi-arrow-down-up text-muted" style="font-size:.7rem"></i></th>
+          <th onclick="sortNSGs(2)" style="cursor:pointer">Location <i class="bi bi-arrow-down-up text-muted" style="font-size:.7rem"></i></th>
+          <th class="text-center" onclick="sortNSGs(3)" style="cursor:pointer">Rules <i class="bi bi-arrow-down-up text-muted" style="font-size:.7rem"></i></th>
+          <th class="text-center" onclick="sortNSGs(4)" style="cursor:pointer">Inbound Allow <i class="bi bi-arrow-down-up text-muted" style="font-size:.7rem"></i></th>
+          <th class="text-center" onclick="sortNSGs(5)" style="cursor:pointer">Open Inbound <i class="bi bi-arrow-down-up text-muted" style="font-size:.7rem"></i></th>
           <th>Last Synced</th>
         </tr>
       </thead>
@@ -132,4 +132,25 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let _nsgSortCol = -1, _nsgSortAsc = true;
+function sortNSGs(col) {
+  const tbody = document.querySelector('#nsg-table tbody');
+  if (!tbody) return;
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  if (_nsgSortCol === col) _nsgSortAsc = !_nsgSortAsc;
+  else { _nsgSortCol = col; _nsgSortAsc = true; }
+  rows.sort((a, b) => {
+    const ta = a.cells[col]?.textContent.trim() || '';
+    const tb = b.cells[col]?.textContent.trim() || '';
+    const na = parseFloat(ta), nb = parseFloat(tb);
+    if (!isNaN(na) && !isNaN(nb)) return _nsgSortAsc ? na - nb : nb - na;
+    return _nsgSortAsc ? ta.localeCompare(tb) : tb.localeCompare(ta);
+  });
+  rows.forEach(r => tbody.appendChild(r));
+}
+</script>
 {% endblock %}
