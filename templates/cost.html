@@ -51,10 +51,28 @@
     </div>
   </div>
   <div class="col-6 col-lg-3">
+    {% set fc = forecast or {} %}
     <div class="card kpi-card">
-      <div class="kpi-value text-muted" id="kpi-top-rg">—</div>
-      <div class="kpi-label">Top Resource Group</div>
-      <div class="kpi-sub" id="kpi-top-rg-cost">by MTD cost</div>
+      {% if fc.get('forecast') %}
+        {% set over = budget > 0 and fc.forecast > budget %}
+        <div class="kpi-value {% if over %}text-danger{% else %}text-primary{% endif %}">
+          {{ currency }}{{ "%.0f"|format(fc.forecast) }}
+        </div>
+        <div class="kpi-label">Month-End Forecast</div>
+        <div class="kpi-sub">
+          {% if over %}
+          <span class="badge bg-danger bg-opacity-15 text-danger border border-danger border-opacity-25">
+            {{ currency }}{{ "%.0f"|format(fc.forecast - budget) }} over budget
+          </span>
+          {% else %}
+          {{ currency }}{{ "%.2f"|format(fc.daily_avg) }}/day avg · {{ fc.days_elapsed }}d elapsed
+          {% endif %}
+        </div>
+      {% else %}
+        <div class="kpi-value text-muted">—</div>
+        <div class="kpi-label">Month-End Forecast</div>
+        <div class="kpi-sub">No cost data yet</div>
+      {% endif %}
     </div>
   </div>
 </div>

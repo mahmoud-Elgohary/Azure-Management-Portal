@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Sync History — WTS Azure Manager{% endblock %}
+{% block page_title %}Sync History{% endblock %}
+
+{% block content %}
+
+<!-- KPI row -->
+{% set ok_count = history | selectattr('status', 'equalto', 'ok') | list | length %}
+{% set partial_count = history | selectattr('status', 'equalto', 'partial') | list | length %}
+{% set error_count = history | selectattr('status', 'equalto', 'error') | list | length %}
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-primary">{{ history | length }}</div>
+      <div class="kpi-label">Syncs Recorded</div>
+      <div class="kpi-sub">Last 50 sync runs</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-success">{{ ok_count }}</div>
+      <div class="kpi-label">Successful</div>
+      <div class="kpi-sub">All sections synced</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value {% if partial_count %}text-warning{% else %}text-muted{% endif %}">{{ partial_count }}</div>
+      <div class="kpi-label">Partial</div>
+      <div class="kpi-sub">Some sections failed</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value {% if error_count %}text-danger{% else %}text-muted{% endif %}">{{ error_count }}</div>
+      <div class="kpi-label">Errors</div>
+      <div class="kpi-sub">Full sync failures</div>
+    </div>
+  </div>
+</div>
+
+<!-- Trigger sync -->
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <p class="text-muted small mb-0">
+    Each row represents one sync run. Partial syncs mean some Azure sections returned errors but others succeeded.
+  </p>
+  <form action="{{ url_for('trigger_sync') }}" method="post" class="d-inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+    <button type="submit" class="btn btn-sm btn-primary">
+      <i class="bi bi-arrow-repeat me-1"></i>Sync Now
+    </button>
+  </form>
+</div>
+
+{% if history %}
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0">
+      <thead class="table-dark">
+        <tr>
+          <th>#</th>
+          <th>Timestamp (UTC)</th>
+          <th>Status</th>
+          <th>Details / Errors</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in history %}
+        <tr class="{% if row.status == 'error' %}table-danger{% elif row.status == 'partial' %}table-warning{% endif %}">
+          <td class="text-muted small">{{ row.id }}</td>
+          <td>
+            <span class="small">{{ (row.synced_at or '')[:19].replace('T',' ') }}</span>
+          </td>
+          <td>
+            <span class="badge
+              {% if row.status == 'ok' %}bg-success
+              {% elif row.status == 'partial' %}bg-warning text-dark
+              {% else %}bg-danger{% endif %}">
+              {% if row.status == 'ok' %}<i class="bi bi-check me-1"></i>{% endif %}
+              {% if row.status == 'error' %}<i class="bi bi-x me-1"></i>{% endif %}
+              {% if row.status == 'partial' %}<i class="bi bi-dash me-1"></i>{% endif %}
+              {{ row.status }}
+            </span>
+          </td>
+          <td>
+            {% if row.detail %}
+            <small class="text-muted font-monospace" style="font-size:.76rem">{{ row.detail }}</small>
+            {% else %}
+            <small class="text-muted">—</small>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="no-data-banner">
+  <i class="bi bi-arrow-repeat"></i>
+  No sync history yet. Trigger a sync to start.
+</div>
+{% endif %}
+
+{% endblock %}

@@ -186,6 +186,54 @@ def get_cost_by_resource_group() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_cost_forecast() -> dict:
+    """Linear end-of-month forecast based on MTD daily average."""
+    now = datetime.now(timezone.utc)
+    days_elapsed = now.day
+    import calendar
+    days_in_month = calendar.monthrange(now.year, now.month)[1]
+    days_remaining = days_in_month - days_elapsed
+
+    month_start = now.strftime("%Y%m01")
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT SUM(cost) AS total, COUNT(DISTINCT date) AS days "
+            "FROM cost_daily WHERE date >= ?",
+            (month_start,),
+        ).fetchone()
+        mtd = row["total"] or 0
+        data_days = row["days"] or days_elapsed
+        daily_avg = mtd / data_days if data_days else 0
+        forecast = mtd + daily_avg * days_remaining
+        return {
+            "mtd": round(mtd, 2),
+            "daily_avg": round(daily_avg, 2),
+            "forecast": round(forecast, 2),
+            "days_elapsed": days_elapsed,
+            "days_in_month": days_in_month,
+        }
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+
+
+def get_sync_history(limit: int = 20) -> list[dict]:
+    """Return the N most recent sync log entries."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT id, synced_at, status, detail FROM sync_log ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
 # ── Advisor ───────────────────────────────────────────────────────────────────
 
 def get_advisor_recs(category: str = None) -> list[dict]:

@@ -76,17 +76,17 @@
 {% if vms %}
 <div class="card">
   <div class="table-responsive">
-    <table class="table table-hover table-sm align-middle mb-0">
+    <table class="table table-hover table-sm align-middle mb-0" id="vm-table">
       <thead class="table-dark">
         <tr>
-          <th>Name</th>
-          <th>Resource Group</th>
-          <th>Location</th>
-          <th>Size</th>
+          <th onclick="sortVMs(0)" style="cursor:pointer" title="Sort">Name <i class="bi bi-arrow-down-up text-muted" style="font-size:.7rem"></i></th>
+          <th onclick="sortVMs(1)" style="cursor:pointer" title="Sort">Resource Group <i class="bi bi-arrow-down-up text-muted" style="font-size:.7rem"></i></th>
+          <th onclick="sortVMs(2)" style="cursor:pointer" title="Sort">Location <i class="bi bi-arrow-down-up text-muted" style="font-size:.7rem"></i></th>
+          <th onclick="sortVMs(3)" style="cursor:pointer" title="Sort">Size <i class="bi bi-arrow-down-up text-muted" style="font-size:.7rem"></i></th>
           <th>OS</th>
           <th>Private IP</th>
           <th>Public IP</th>
-          <th>Power State</th>
+          <th onclick="sortVMs(7)" style="cursor:pointer" title="Sort">Power State <i class="bi bi-arrow-down-up text-muted" style="font-size:.7rem"></i></th>
           <th>CPU %</th>
         </tr>
       </thead>
@@ -150,6 +150,25 @@
   {% endif %}
 </div>
 {% endif %}
+
+{% block scripts %}
+<script>
+let _vmSortCol = -1, _vmSortAsc = true;
+function sortVMs(col) {
+  const tbody = document.querySelector('#vm-table tbody');
+  if (!tbody) return;
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  if (_vmSortCol === col) _vmSortAsc = !_vmSortAsc;
+  else { _vmSortCol = col; _vmSortAsc = true; }
+  rows.sort((a, b) => {
+    const ta = a.cells[col]?.textContent.trim() || '';
+    const tb = b.cells[col]?.textContent.trim() || '';
+    return _vmSortAsc ? ta.localeCompare(tb) : tb.localeCompare(ta);
+  });
+  rows.forEach(r => tbody.appendChild(r));
+}
+</script>
+{% endblock %}
 
 <!-- KQL Investigation -->
 <div class="card mt-4">

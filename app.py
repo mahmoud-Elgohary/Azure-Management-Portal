@@ -199,10 +199,11 @@ def dashboard():
             "currency": queries.get_cost_currency(),
             "reservation_summary": queries.get_reservation_summary(),
             "devops_summary": queries.get_devops_summary(),
+            "cost_forecast": queries.get_cost_forecast(),
         }
     except Exception as exc:
         flash(_rbac_error(exc), "danger")
-        ctx = {"sync": queries.last_sync_info(), "stats": {}, "mtd_cost": 0, "budget": config.MONTHLY_BUDGET, "cost_anomalies": [], "currency": "EUR", "reservation_summary": {}, "devops_summary": {}}
+        ctx = {"sync": queries.last_sync_info(), "stats": {}, "mtd_cost": 0, "budget": config.MONTHLY_BUDGET, "cost_anomalies": [], "currency": "EUR", "reservation_summary": {}, "devops_summary": {}, "cost_forecast": {}}
     return render_template("dashboard.html", **ctx)
 
 
@@ -361,9 +362,10 @@ def cost_view():
         from azure_client.cost import detect_anomalies
         anomalies = detect_anomalies(daily)
         cost_recs = queries.get_cost_advisor_recs()
+        forecast  = queries.get_cost_forecast()
     except Exception as exc:
         flash(_rbac_error(exc), "danger")
-        daily, mtd, anomalies, cost_recs, currency = [], 0, [], [], "EUR"
+        daily, mtd, anomalies, cost_recs, currency, forecast = [], 0, [], [], "EUR", {}
     return render_template(
         "cost.html",
         daily=daily,
@@ -372,6 +374,7 @@ def cost_view():
         budget=config.MONTHLY_BUDGET,
         anomalies=anomalies,
         cost_recs=cost_recs,
+        forecast=forecast,
         sub=sub,
         sync=queries.last_sync_info(),
     )
@@ -1120,6 +1123,19 @@ def trigger_sync():
     flash("Sync started in background. Refresh in a moment to see updated data.", "info")
     next_url = request.referrer or url_for("dashboard")
     return redirect(next_url)
+
+
+# ── Sync History ──────────────────────────────────────────────────────────────
+
+@app.route("/sync/history")
+@login_required
+def sync_history_view():
+    history = queries.get_sync_history(50)
+    return render_template(
+        "sync_history.html",
+        history=history,
+        sync=queries.last_sync_info(),
+    )
 
 
 # ── Boot ──────────────────────────────────────────────────────────────────────

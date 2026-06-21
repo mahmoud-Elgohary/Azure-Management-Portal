@@ -62,9 +62,14 @@
         <div class="kpi-value text-success">€{{ "%.0f"|format(mtd_cost or 0) }}</div>
         <div class="kpi-label">Month-to-Date Cost</div>
         <div class="kpi-sub">
+          {% set fc = cost_forecast or {} %}
           {% if mtd_cost and budget %}
             {% set pct = ((mtd_cost / budget) * 100) | int %}
             <span class="badge {% if pct > 90 %}bg-danger{% elif pct > 70 %}bg-warning text-dark{% else %}bg-success{% endif %} bg-opacity-15 border border-opacity-25">{{ pct }}% of €{{ "%.0f"|format(budget) }} budget</span>
+          {% elif fc.get('forecast') %}
+            <span class="badge bg-primary bg-opacity-15 text-primary border border-primary border-opacity-25">
+              Forecast: €{{ "%.0f"|format(fc.forecast) }}
+            </span>
           {% else %}
             Current calendar month
           {% endif %}
