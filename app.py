@@ -1076,6 +1076,7 @@ def api_report_csv(section):
         "postgresql": ("pg_servers", ["name", "resource_group", "location", "version", "state", "sku_name", "storage_gb"]),
         "sql": ("sql_servers", ["name", "resource_group", "location", "state", "fqdn"]),
         "backup": ("backup_issues", ["vm_name", "vault_name", "last_backup_status", "last_backup_time", "resource_group"]),
+        "reservations": ("reservations_expiring", ["name", "sku_name", "quantity", "term", "scope_type", "utilization_pct", "expiry_date"]),
     }
     if section not in section_map:
         return jsonify({"error": "unknown section"}), 400

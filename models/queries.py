@@ -1905,6 +1905,41 @@ def get_report_data() -> dict:
             "FROM backup_status WHERE last_backup_status NOT IN ('Completed','IRPending') ORDER BY last_backup_time"
         ).fetchall()
 
+        try:
+            nsg_summary = conn.execute(
+                """SELECT
+                    COUNT(DISTINCT n.nsg_id) AS total,
+                    COUNT(DISTINCT CASE WHEN r.direction='Inbound' AND r.access='Allow'
+                        AND r.source_prefix IN ('*','Any','Internet','0.0.0.0/0')
+                        THEN n.nsg_id END) AS nsgs_with_open,
+                    SUM(CASE WHEN r.direction='Inbound' AND r.access='Allow' THEN 1 ELSE 0 END) AS total_inbound_allow,
+                    SUM(CASE WHEN r.direction='Inbound' AND r.access='Allow'
+                        AND r.source_prefix IN ('*','Any','Internet','0.0.0.0/0') THEN 1 ELSE 0 END) AS total_open_inbound
+                FROM nsgs n LEFT JOIN nsg_rules r ON r.nsg_id = n.nsg_id"""
+            ).fetchone()
+            nsg_summary = dict(nsg_summary) if nsg_summary else {}
+        except Exception:
+            nsg_summary = {}
+
+        try:
+            reservations_expiring = conn.execute(
+                "SELECT name, quantity, sku_name, scope_type, expiry_date, utilization_pct, term "
+                "FROM reservations WHERE state='Active' AND expiry_date <= date('now','+30 days') "
+                "ORDER BY expiry_date ASC"
+            ).fetchall()
+            reservations_expiring = [dict(r) for r in reservations_expiring]
+        except Exception:
+            reservations_expiring = []
+
+        try:
+            network_summary = conn.execute(
+                "SELECT (SELECT COUNT(*) FROM vnets) AS vnet_count, "
+                "(SELECT COUNT(*) FROM network_interfaces WHERE public_ip IS NOT NULL AND public_ip != '') AS nic_with_public_ip"
+            ).fetchone()
+            network_summary = dict(network_summary) if network_summary else {}
+        except Exception:
+            network_summary = {}
+
         last_sync = last_sync_info()
 
         return {
@@ -1919,6 +1954,9 @@ def get_report_data() -> dict:
             "pg_servers": [dict(r) for r in pg_servers],
             "sql_servers": [dict(r) for r in sql_servers],
             "backup_issues": [dict(r) for r in backup_issues],
+            "nsg_summary": nsg_summary,
+            "reservations_expiring": reservations_expiring,
+            "network_summary": network_summary,
         }
     except Exception:
         return {}
