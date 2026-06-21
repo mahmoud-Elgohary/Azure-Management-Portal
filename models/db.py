@@ -322,6 +322,60 @@ CREATE TABLE IF NOT EXISTS resource_snapshots (
     synced_at       TEXT
 );
 
+-- ── Azure DevOps ─────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS devops_projects (
+    project_id      TEXT PRIMARY KEY,
+    name            TEXT,
+    description     TEXT,
+    state           TEXT,
+    visibility      TEXT,
+    last_update     TEXT,
+    synced_at       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS devops_pipelines (
+    pipeline_id     TEXT PRIMARY KEY,   -- project_id||'/'||definition_id
+    definition_id   INTEGER,
+    project_id      TEXT,
+    project_name    TEXT,
+    name            TEXT,
+    folder          TEXT,
+    queue_status    TEXT,               -- enabled | disabled | paused
+    last_build_id   INTEGER,
+    last_build_number TEXT,
+    last_build_result TEXT,             -- succeeded | failed | partiallySucceeded | cancelled
+    last_build_time TEXT,
+    synced_at       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS devops_builds (
+    build_id        TEXT PRIMARY KEY,   -- project_id||'/'||id
+    ado_id          INTEGER,
+    project_id      TEXT,
+    project_name    TEXT,
+    pipeline_name   TEXT,
+    build_number    TEXT,
+    status          TEXT,               -- completed | inProgress | notStarted
+    result          TEXT,               -- succeeded | failed | partiallySucceeded | cancelled
+    start_time      TEXT,
+    finish_time     TEXT,
+    duration_secs   INTEGER,
+    requested_by    TEXT,
+    branch          TEXT,
+    synced_at       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS devops_repos (
+    repo_id         TEXT PRIMARY KEY,
+    project_id      TEXT,
+    project_name    TEXT,
+    name            TEXT,
+    default_branch  TEXT,
+    size_bytes      INTEGER,
+    remote_url      TEXT,
+    synced_at       TEXT
+);
+
 -- ── Security score history ───────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS security_score_history (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -379,6 +433,9 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_date      ON resource_snapshots(snapsho
 CREATE INDEX IF NOT EXISTS idx_reservations_state  ON reservations(state);
 CREATE INDEX IF NOT EXISTS idx_reservations_expiry ON reservations(expiry_date);
 CREATE INDEX IF NOT EXISTS idx_sec_score_date      ON security_score_history(snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_devops_builds_time  ON devops_builds(start_time);
+CREATE INDEX IF NOT EXISTS idx_devops_builds_proj  ON devops_builds(project_id);
+CREATE INDEX IF NOT EXISTS idx_devops_pipes_proj   ON devops_pipelines(project_id);
 """
 
 

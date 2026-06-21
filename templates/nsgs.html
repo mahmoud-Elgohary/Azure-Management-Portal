@@ -108,4 +108,28 @@
   {% endif %}
 </div>
 {% endif %}
+
+<div class="card mt-4">
+  <div class="card-header"><i class="bi bi-terminal me-1"></i> NSG Investigations (KQL)</div>
+  <div class="card-body">
+    <div class="row g-2">
+      {% set nsg_queries = [
+        ("NSG Rule Changes (7d)", "AzureActivity\n| where OperationNameValue contains 'MICROSOFT.NETWORK/NETWORKSECURITYGROUPS'\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, ResourceGroup, OperationNameValue\n| order by TimeGenerated desc"),
+        ("Denied Flow Logs", "AzureNetworkAnalytics_CL\n| where SubType_s == 'FlowLog'\n| where FlowStatus_s == 'D'\n| where TimeGenerated >= ago(1d)\n| summarize Denied = count() by SrcIP_s, DestPort_d, NSGList_s\n| order by Denied desc\n| limit 50"),
+        ("Allowed Internet Inbound", "AzureNetworkAnalytics_CL\n| where SubType_s == 'FlowLog'\n| where FlowStatus_s == 'A'\n| where FlowDirection_s == 'I'\n| where SrcIP_s !startswith '10.' and SrcIP_s !startswith '172.' and SrcIP_s !startswith '192.168.'\n| where TimeGenerated >= ago(1d)\n| summarize count() by SrcIP_s, DestPort_d\n| order by count_ desc\n| limit 30"),
+        ("Top Denied Sources", "AzureNetworkAnalytics_CL\n| where SubType_s == 'FlowLog'\n| where FlowStatus_s == 'D'\n| where TimeGenerated >= ago(1d)\n| summarize Blocked = count() by SrcIP_s\n| order by Blocked desc\n| limit 20"),
+        ("NSG Association Changes", "AzureActivity\n| where OperationNameValue in ('MICROSOFT.NETWORK/NETWORKINTERFACES/WRITE','MICROSOFT.NETWORK/SUBNETS/WRITE')\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, ResourceGroup, ResourceId\n| order by TimeGenerated desc"),
+        ("Port Scan Detection", "AzureNetworkAnalytics_CL\n| where SubType_s == 'FlowLog'\n| where FlowStatus_s == 'D'\n| where TimeGenerated >= ago(1h)\n| summarize PortsHit = dcount(DestPort_d) by SrcIP_s\n| where PortsHit > 10\n| order by PortsHit desc"),
+      ] %}
+      {% for name, query in nsg_queries %}
+      <div class="col-md-4">
+        <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                onclick="sessionStorage.setItem('kql_prefill', {{ query | tojson }}); location.href='{{ url_for('kql_console') }}'">
+          <i class="bi bi-terminal me-1"></i>{{ name }}
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
 {% endblock %}

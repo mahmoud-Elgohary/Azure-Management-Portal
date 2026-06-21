@@ -1,0 +1,333 @@
+{% extends "base.html" %}
+{% block title %}DevOps Center — WTS Azure Manager{% endblock %}
+{% block page_title %}DevOps Center{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+
+{% if not devops_enabled %}
+<!-- Not configured -->
+<div class="card">
+  <div class="card-body text-center py-5">
+    <i class="bi bi-git fs-1 text-muted d-block mb-3"></i>
+    <h5>Azure DevOps not configured</h5>
+    <p class="text-muted small mb-4">
+      Add the following variables to <code>.env</code> to enable DevOps integration:
+    </p>
+    <div class="mx-auto text-start p-3 bg-dark text-light rounded" style="max-width:480px;font-family:monospace;font-size:.85rem">
+      AZURE_DEVOPS_ORG=<em>myorganization</em><br>
+      AZURE_DEVOPS_PAT=<em>your-personal-access-token</em>
+    </div>
+    <p class="text-muted small mt-3">
+      Generate a PAT at <strong>dev.azure.com → User Settings → Personal Access Tokens</strong>.<br>
+      Required scopes: <code>Build (Read)</code>, <code>Code (Read)</code>, <code>Project and Team (Read)</code>.
+    </p>
+  </div>
+</div>
+{% elif not projects %}
+<!-- Configured but no data yet -->
+<div class="alert alert-info d-flex align-items-center gap-2 mb-4">
+  <i class="bi bi-info-circle fs-5"></i>
+  <div>Azure DevOps configured for org <strong>{{ devops_org }}</strong>. Run a <strong>Sync</strong> to pull projects, pipelines and builds.</div>
+</div>
+<div class="card">
+  <div class="card-body text-center py-5 text-muted">
+    <i class="bi bi-arrow-clockwise fs-1 d-block mb-2"></i>
+    <p class="small">No DevOps data yet. Trigger a sync using the <strong>Sync</strong> button in the top bar.</p>
+  </div>
+</div>
+{% else %}
+
+<!-- ── KPI row ────────────────────────────────────────────────────────── -->
+{% set sm = summary or {} %}
+<div class="row g-3 mb-3">
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-primary">{{ sm.active_projects or 0 }}</div>
+      <div class="kpi-label">Active Projects</div>
+      <div class="kpi-sub">Azure DevOps — {{ devops_org }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value {% if sm.failing_pipelines %}text-danger{% else %}text-success{% endif %}">
+        {{ sm.failing_pipelines or 0 }}
+      </div>
+      <div class="kpi-label">Failing Pipelines</div>
+      <div class="kpi-sub">{{ sm.enabled_pipelines or 0 }} enabled total</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value {% if sm.builds_failed_24h %}text-danger{% elif sm.builds_ok_24h %}text-success{% else %}text-muted{% endif %}">
+        {{ sm.builds_ok_24h or 0 }}/{{ (sm.builds_ok_24h or 0) + (sm.builds_failed_24h or 0) }}
+      </div>
+      <div class="kpi-label">Builds Passing (24h)</div>
+      <div class="kpi-sub">{% if sm.builds_failed_24h %}{{ sm.builds_failed_24h }} failed{% else %}All green{% endif %}</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-value text-muted">{{ sm.total_repos or 0 }}</div>
+      <div class="kpi-label">Git Repositories</div>
+      <div class="kpi-sub">Across all projects</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Project filter ────────────────────────────────────────────────── -->
+<div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+  <strong class="text-muted small me-1">Project:</strong>
+  <a href="{{ url_for('devops_view') }}"
+     class="btn btn-sm {% if not selected_project_id %}btn-primary{% else %}btn-outline-secondary{% endif %}">
+    All Projects
+  </a>
+  {% for proj in projects %}
+  <a href="{{ url_for('devops_view', project=proj.project_id) }}"
+     class="btn btn-sm {% if selected_project_id == proj.project_id %}btn-primary{% else %}btn-outline-secondary{% endif %}">
+    {{ proj.name }}
+    <span class="badge {% if proj.state == 'wellFormed' %}bg-success{% else %}bg-secondary{% endif %} ms-1" style="font-size:.6rem">
+      {{ proj.state }}
+    </span>
+  </a>
+  {% endfor %}
+</div>
+
+<!-- ── Build trend chart + recent builds ─────────────────────────────── -->
+<div class="row g-3 mb-3">
+  <div class="col-lg-5">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-bar-chart me-2 text-primary"></i>Build Results (14 days)
+      </div>
+      <div class="card-body">
+        {% if trend %}
+        <div style="height:160px"><canvas id="chart-builds"></canvas></div>
+        {% else %}
+        <div class="text-muted small text-center py-4">No build history yet.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-lightning me-2 text-warning"></i>Recent Builds
+        <span class="badge bg-secondary ms-2">{{ builds | length }}</span>
+      </div>
+      <div class="card-body p-0" style="max-height:220px;overflow-y:auto">
+        {% if builds %}
+        <table class="table table-sm mb-0">
+          <thead class="table-light sticky-top">
+            <tr><th>Pipeline</th><th>Project</th><th>Build</th><th>Result</th><th>Branch</th><th>Duration</th><th>When</th></tr>
+          </thead>
+          <tbody>
+            {% for b in builds[:20] %}
+            <tr class="{% if b.result == 'failed' %}table-danger{% elif b.result == 'partiallySucceeded' %}table-warning{% endif %}">
+              <td><small class="fw-500">{{ b.pipeline_name or '—' }}</small></td>
+              <td><small class="text-muted">{{ b.project_name }}</small></td>
+              <td><small><code>{{ b.build_number or '—' }}</code></small></td>
+              <td>
+                <span class="badge {% if b.result == 'succeeded' %}bg-success{% elif b.result == 'failed' %}bg-danger{% elif b.result == 'partiallySucceeded' %}bg-warning text-dark{% else %}bg-secondary{% endif %}" style="font-size:.7rem">
+                  {% if b.result == 'succeeded' %}<i class="bi bi-check me-1"></i>
+                  {% elif b.result == 'failed' %}<i class="bi bi-x me-1"></i>
+                  {% elif b.result == 'partiallySucceeded' %}<i class="bi bi-dash me-1"></i>
+                  {% endif %}{{ b.result or '—' }}
+                </span>
+              </td>
+              <td><small class="text-muted">{{ b.branch or '—' }}</small></td>
+              <td>
+                <small class="text-muted">
+                  {% if b.duration_secs %}
+                    {% if b.duration_secs >= 3600 %}{{ (b.duration_secs // 3600) }}h {{ ((b.duration_secs % 3600) // 60) }}m
+                    {% elif b.duration_secs >= 60 %}{{ b.duration_secs // 60 }}m {{ b.duration_secs % 60 }}s
+                    {% else %}{{ b.duration_secs }}s{% endif %}
+                  {% else %}—{% endif %}
+                </small>
+              </td>
+              <td><small class="text-muted">{{ (b.start_time or '')[:10] }}</small></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="p-3 text-muted small text-center">No builds in cache. Run a sync.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Pipelines ─────────────────────────────────────────────────────── -->
+<div class="card mb-3">
+  <div class="card-header d-flex align-items-center">
+    <i class="bi bi-play-circle me-2 text-primary"></i>Pipelines
+    <span class="badge bg-secondary ms-2">{{ pipelines | length }}</span>
+    <div class="ms-auto d-flex gap-1">
+      <button class="btn btn-sm btn-outline-secondary" onclick="filterPipes('all')">All</button>
+      <button class="btn btn-sm btn-outline-danger" onclick="filterPipes('failed')">Failing</button>
+      <button class="btn btn-sm btn-outline-success" onclick="filterPipes('succeeded')">Healthy</button>
+      <button class="btn btn-sm btn-outline-secondary" onclick="filterPipes('disabled')">Disabled</button>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    {% if pipelines %}
+    <div class="table-responsive" style="max-height:360px;overflow-y:auto">
+      <table class="table table-sm table-hover mb-0" id="pipe-table">
+        <thead class="table-dark sticky-top">
+          <tr><th>Pipeline</th><th>Project</th><th>Folder</th><th>Status</th><th>Last Build</th><th>Last Result</th><th>Last Run</th></tr>
+        </thead>
+        <tbody>
+          {% for p in pipelines %}
+          <tr data-result="{{ p.last_build_result or '' }}" data-qstatus="{{ p.queue_status or '' }}"
+              class="{% if p.last_build_result == 'failed' and p.queue_status == 'enabled' %}table-danger{% elif p.queue_status == 'disabled' %}text-muted{% endif %}">
+            <td class="fw-500 small">{{ p.name }}</td>
+            <td><small class="text-muted">{{ p.project_name }}</small></td>
+            <td><small class="text-muted">{{ p.folder or '\\' }}</small></td>
+            <td>
+              <span class="badge {% if p.queue_status == 'enabled' %}bg-success{% elif p.queue_status == 'disabled' %}bg-secondary{% else %}bg-warning text-dark{% endif %}" style="font-size:.68rem">
+                {{ p.queue_status or '—' }}
+              </span>
+            </td>
+            <td><small><code>{{ p.last_build_number or '—' }}</code></small></td>
+            <td>
+              {% if p.last_build_result %}
+              <span class="badge {% if p.last_build_result == 'succeeded' %}bg-success{% elif p.last_build_result == 'failed' %}bg-danger{% elif p.last_build_result == 'partiallySucceeded' %}bg-warning text-dark{% else %}bg-secondary{% endif %}" style="font-size:.68rem">
+                {{ p.last_build_result }}
+              </span>
+              {% else %}<span class="text-muted small">—</span>{% endif %}
+            </td>
+            <td><small class="text-muted">{{ (p.last_build_time or '')[:10] }}</small></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="p-3 text-muted small text-center">No pipelines in cache. Run a sync.</div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ── Repos ─────────────────────────────────────────────────────────── -->
+{% if repos %}
+<div class="card mb-3">
+  <div class="card-header d-flex align-items-center">
+    <i class="bi bi-git me-2 text-primary"></i>Git Repositories
+    <span class="badge bg-secondary ms-2">{{ repos | length }}</span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive" style="max-height:300px;overflow-y:auto">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-light sticky-top">
+          <tr><th>Repository</th><th>Project</th><th>Default Branch</th><th>Size</th></tr>
+        </thead>
+        <tbody>
+          {% for r in repos %}
+          <tr>
+            <td class="fw-500 small">
+              {% if r.remote_url %}
+              <a href="{{ r.remote_url }}" target="_blank" rel="noopener" class="text-link">
+                {{ r.name }}<i class="bi bi-box-arrow-up-right ms-1 small"></i>
+              </a>
+              {% else %}{{ r.name }}{% endif %}
+            </td>
+            <td><small class="text-muted">{{ r.project_name }}</small></td>
+            <td><code class="small">{{ r.default_branch or '—' }}</code></td>
+            <td>
+              <small class="text-muted">
+                {% if r.size_bytes %}
+                  {% if r.size_bytes >= 1073741824 %}{{ "%.1f"|format(r.size_bytes/1073741824) }} GiB
+                  {% elif r.size_bytes >= 1048576 %}{{ "%.1f"|format(r.size_bytes/1048576) }} MiB
+                  {% else %}{{ (r.size_bytes // 1024) }} KiB{% endif %}
+                {% else %}—{% endif %}
+              </small>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ── Projects overview ─────────────────────────────────────────────── -->
+<div class="card">
+  <div class="card-header"><i class="bi bi-folder2-open me-2 text-primary"></i>Projects</div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead class="table-light">
+          <tr><th>Name</th><th>State</th><th>Visibility</th><th>Last Updated</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for proj in projects %}
+          <tr>
+            <td class="fw-500">{{ proj.name }}</td>
+            <td>
+              <span class="badge {% if proj.state == 'wellFormed' %}bg-success{% else %}bg-secondary{% endif %}" style="font-size:.7rem">
+                {{ proj.state }}
+              </span>
+            </td>
+            <td><span class="badge bg-secondary bg-opacity-50 text-dark" style="font-size:.7rem">{{ proj.visibility }}</span></td>
+            <td><small class="text-muted">{{ (proj.last_update or '')[:10] }}</small></td>
+            <td>
+              <a href="{{ url_for('devops_view', project=proj.project_id) }}"
+                 class="btn btn-sm btn-outline-secondary">Filter</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+{% if trend %}
+(function() {
+  const trend = {{ trend | tojson }};
+  const labels = trend.map(d => d.day);
+  const succeeded = trend.map(d => d.succeeded);
+  const failed = trend.map(d => d.failed);
+
+  new Chart(document.getElementById('chart-builds'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Succeeded', data: succeeded, backgroundColor: 'rgba(22,163,74,0.8)', stack: 'a' },
+        { label: 'Failed',    data: failed,    backgroundColor: 'rgba(220,38,38,0.8)',  stack: 'a' },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { font: { size: 9 }, boxWidth: 10 } } },
+      scales: {
+        x: { stacked: true, ticks: { maxTicksLimit: 10, font: { size: 9 } } },
+        y: { stacked: true, ticks: { font: { size: 9 }, stepSize: 1 } }
+      }
+    }
+  });
+})();
+{% endif %}
+
+function filterPipes(filter) {
+  document.querySelectorAll('#pipe-table tbody tr').forEach(row => {
+    if (filter === 'all') { row.style.display = ''; return; }
+    if (filter === 'failed')    { row.style.display = row.dataset.result === 'failed' ? '' : 'none'; return; }
+    if (filter === 'succeeded') { row.style.display = row.dataset.result === 'succeeded' ? '' : 'none'; return; }
+    if (filter === 'disabled')  { row.style.display = row.dataset.qstatus === 'disabled' ? '' : 'none'; return; }
+  });
+}
+</script>
+{% endblock %}

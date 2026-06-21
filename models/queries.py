@@ -1688,6 +1688,121 @@ def get_cost_advisor_recs() -> list[dict]:
         conn.close()
 
 
+# ── Azure DevOps ───────────────────────────────────────────────────────────────
+
+def get_devops_projects() -> list[dict]:
+    conn = get_db()
+    try:
+        rows = conn.execute("SELECT * FROM devops_projects ORDER BY name").fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def get_devops_pipelines(project_id: str = None) -> list[dict]:
+    conn = get_db()
+    try:
+        if project_id:
+            rows = conn.execute(
+                "SELECT * FROM devops_pipelines WHERE project_id=? ORDER BY project_name, folder, name",
+                (project_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM devops_pipelines ORDER BY project_name, folder, name"
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def get_devops_builds(project_id: str = None, limit: int = 100) -> list[dict]:
+    conn = get_db()
+    try:
+        if project_id:
+            rows = conn.execute(
+                "SELECT * FROM devops_builds WHERE project_id=? ORDER BY start_time DESC LIMIT ?",
+                (project_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM devops_builds ORDER BY start_time DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def get_devops_repos(project_id: str = None) -> list[dict]:
+    conn = get_db()
+    try:
+        if project_id:
+            rows = conn.execute(
+                "SELECT * FROM devops_repos WHERE project_id=? ORDER BY name",
+                (project_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM devops_repos ORDER BY project_name, name"
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def get_devops_summary() -> dict:
+    conn = get_db()
+    try:
+        r = conn.execute("""
+            SELECT
+                (SELECT COUNT(*) FROM devops_projects WHERE state='wellFormed') AS active_projects,
+                (SELECT COUNT(*) FROM devops_pipelines) AS total_pipelines,
+                (SELECT COUNT(*) FROM devops_pipelines WHERE queue_status='enabled') AS enabled_pipelines,
+                (SELECT COUNT(*) FROM devops_pipelines WHERE last_build_result='failed') AS failing_pipelines,
+                (SELECT COUNT(*) FROM devops_builds WHERE result='succeeded'
+                    AND start_time >= datetime('now','-1 day')) AS builds_ok_24h,
+                (SELECT COUNT(*) FROM devops_builds WHERE result='failed'
+                    AND start_time >= datetime('now','-1 day')) AS builds_failed_24h,
+                (SELECT COUNT(*) FROM devops_repos) AS total_repos
+        """).fetchone()
+        return dict(r) if r else {}
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+
+
+def get_devops_build_trend(days: int = 7) -> list[dict]:
+    """Returns daily succeeded/failed build counts."""
+    conn = get_db()
+    try:
+        rows = conn.execute("""
+            SELECT
+                substr(start_time, 1, 10) AS day,
+                SUM(CASE WHEN result='succeeded' THEN 1 ELSE 0 END) AS succeeded,
+                SUM(CASE WHEN result='failed' THEN 1 ELSE 0 END) AS failed,
+                COUNT(*) AS total
+            FROM devops_builds
+            WHERE start_time >= datetime('now', ? || ' days')
+            GROUP BY day
+            ORDER BY day ASC
+        """, (f"-{days}",)).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
 # ── Security score history ─────────────────────────────────────────────────────
 
 def get_security_score_trend(days: int = 30) -> list[dict]:

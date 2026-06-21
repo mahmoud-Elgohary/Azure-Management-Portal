@@ -967,6 +967,40 @@ def healthz():
         return jsonify({"status": "error", "detail": str(exc)}), 500
 
 
+# ── DevOps Center (Phase 12) ─────────────────────────────────────────────────
+
+@app.route("/devops")
+@login_required
+def devops_view():
+    project_id = request.args.get("project")
+    try:
+        projects  = queries.get_devops_projects()
+        summary   = queries.get_devops_summary()
+        pipelines = queries.get_devops_pipelines(project_id=project_id)
+        builds    = queries.get_devops_builds(project_id=project_id, limit=50)
+        repos     = queries.get_devops_repos(project_id=project_id)
+        trend     = queries.get_devops_build_trend(days=14)
+    except Exception as exc:
+        flash(_rbac_error(exc), "danger")
+        projects, summary, pipelines, builds, repos, trend = [], {}, [], [], [], []
+    # selected project name for display
+    selected_project = next((p for p in projects if p["project_id"] == project_id), None)
+    return render_template(
+        "devops.html",
+        projects=projects,
+        summary=summary,
+        pipelines=pipelines,
+        builds=builds,
+        repos=repos,
+        trend=trend,
+        selected_project=selected_project,
+        selected_project_id=project_id,
+        devops_enabled=bool(config.AZURE_DEVOPS_ORG),
+        devops_org=config.AZURE_DEVOPS_ORG,
+        sync=queries.last_sync_info(),
+    )
+
+
 # ── Reservations (Phase 11) ──────────────────────────────────────────────────
 
 @app.route("/reservations")

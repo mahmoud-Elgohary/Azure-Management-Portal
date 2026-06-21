@@ -67,3 +67,10 @@ MIN_SYNC_INTERVAL_MINUTES = int(os.environ.get("MIN_SYNC_INTERVAL_MINUTES", 5))
 # ── Cost budget ───────────────────────────────────────────────────────────────
 # Set MONTHLY_BUDGET_EUR=5000 in .env to enable the budget KPI on the Cost page.
 MONTHLY_BUDGET = float(os.environ.get("MONTHLY_BUDGET_EUR", 0))
+
+# ── Azure DevOps ──────────────────────────────────────────────────────────────
+# Set AZURE_DEVOPS_ORG=myorg and AZURE_DEVOPS_PAT=<personal-access-token> in .env
+# to enable the DevOps Center. The PAT needs: Build (Read), Release (Read),
+# Code (Read), Project and Team (Read).
+AZURE_DEVOPS_ORG = os.environ.get("AZURE_DEVOPS_ORG", "")
+AZURE_DEVOPS_PAT = os.environ.get("AZURE_DEVOPS_PAT", "")

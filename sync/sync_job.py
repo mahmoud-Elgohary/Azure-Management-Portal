@@ -28,6 +28,7 @@ from azure_client import (
     activity as activity_client,
     resource_graph,
 )
+from azure_client import devops as devops_client
 
 log = logging.getLogger("wts.sync")
 logging.basicConfig(
@@ -594,6 +595,79 @@ def run_sync():
         log.info("  → security score snapshot recorded: %d/100", sec.get("score", 0))
     except Exception as exc:
         log.warning("Security score snapshot failed: %s", exc)
+
+    # Azure DevOps (non-fatal, requires AZURE_DEVOPS_ORG + AZURE_DEVOPS_PAT)
+    if devops_client._enabled():
+        log.info("Fetching Azure DevOps data …")
+        try:
+            projects = devops_client.fetch_projects()
+            for proj in projects:
+                conn.execute(
+                    """INSERT INTO devops_projects
+                       (project_id,name,description,state,visibility,last_update,synced_at)
+                       VALUES (:project_id,:name,:description,:state,:visibility,:last_update,:synced_at)
+                       ON CONFLICT(project_id) DO UPDATE SET
+                        name=excluded.name, state=excluded.state,
+                        last_update=excluded.last_update, synced_at=excluded.synced_at""",
+                    {**proj, "synced_at": ts},
+                )
+            log.info("  → %d DevOps projects", len(projects))
+
+            for proj in projects:
+                pid, pname = proj["project_id"], proj["name"]
+
+                pipes = devops_client.fetch_pipelines(pid, pname)
+                for p in pipes:
+                    conn.execute(
+                        """INSERT INTO devops_pipelines
+                           (pipeline_id,definition_id,project_id,project_name,name,folder,
+                            queue_status,last_build_id,last_build_number,last_build_result,
+                            last_build_time,synced_at)
+                           VALUES (:pipeline_id,:definition_id,:project_id,:project_name,:name,:folder,
+                            :queue_status,:last_build_id,:last_build_number,:last_build_result,
+                            :last_build_time,:synced_at)
+                           ON CONFLICT(pipeline_id) DO UPDATE SET
+                            name=excluded.name, queue_status=excluded.queue_status,
+                            last_build_id=excluded.last_build_id,
+                            last_build_number=excluded.last_build_number,
+                            last_build_result=excluded.last_build_result,
+                            last_build_time=excluded.last_build_time,
+                            synced_at=excluded.synced_at""",
+                        {**p, "synced_at": ts},
+                    )
+
+                builds = devops_client.fetch_builds(pid, pname, max_builds=30)
+                for b in builds:
+                    conn.execute(
+                        """INSERT INTO devops_builds
+                           (build_id,ado_id,project_id,project_name,pipeline_name,build_number,
+                            status,result,start_time,finish_time,duration_secs,requested_by,branch,synced_at)
+                           VALUES (:build_id,:ado_id,:project_id,:project_name,:pipeline_name,:build_number,
+                            :status,:result,:start_time,:finish_time,:duration_secs,:requested_by,:branch,:synced_at)
+                           ON CONFLICT(build_id) DO UPDATE SET
+                            status=excluded.status, result=excluded.result,
+                            finish_time=excluded.finish_time, duration_secs=excluded.duration_secs,
+                            synced_at=excluded.synced_at""",
+                        {**b, "synced_at": ts},
+                    )
+
+                repos = devops_client.fetch_repos(pid, pname)
+                for r in repos:
+                    conn.execute(
+                        """INSERT INTO devops_repos
+                           (repo_id,project_id,project_name,name,default_branch,size_bytes,remote_url,synced_at)
+                           VALUES (:repo_id,:project_id,:project_name,:name,:default_branch,:size_bytes,:remote_url,:synced_at)
+                           ON CONFLICT(repo_id) DO UPDATE SET
+                            name=excluded.name, default_branch=excluded.default_branch,
+                            size_bytes=excluded.size_bytes, synced_at=excluded.synced_at""",
+                        {**r, "synced_at": ts},
+                    )
+            log.info("  → DevOps sync complete (%d projects)", len(projects))
+        except Exception as exc:
+            log.warning("DevOps: %s", exc)
+            # non-fatal
+    else:
+        log.info("Azure DevOps skipped (AZURE_DEVOPS_ORG/PAT not configured)")
 
     # Resource change snapshot (always runs regardless of errors)
     try:

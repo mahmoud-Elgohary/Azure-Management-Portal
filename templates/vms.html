@@ -150,4 +150,30 @@
   {% endif %}
 </div>
 {% endif %}
+
+<!-- KQL Investigation -->
+<div class="card mt-4">
+  <div class="card-header"><i class="bi bi-terminal me-1"></i> VM Fleet Investigations (KQL)</div>
+  <div class="card-body">
+    <p class="small text-muted mb-3">Query VM performance and activity across the fleet.</p>
+    <div class="row g-2">
+      {% set vm_queries = [
+        ("High CPU VMs (1d)", "Perf\n| where ObjectName == 'Processor' and CounterName == '% Processor Time'\n| where TimeGenerated >= ago(1d)\n| summarize AvgCPU = avg(CounterValue) by Computer\n| where AvgCPU > 80\n| order by AvgCPU desc"),
+        ("Low Memory VMs (1d)", "Perf\n| where ObjectName == 'Memory'\n| where CounterName == 'Available MBytes'\n| where TimeGenerated >= ago(1d)\n| summarize AvgFreeGB = avg(CounterValue)/1024 by Computer\n| where AvgFreeGB < 1\n| order by AvgFreeGB asc"),
+        ("VM Start/Stop Events (7d)", "AzureActivity\n| where OperationNameValue in ('MICROSOFT.COMPUTE/VIRTUALMACHINES/START/ACTION','MICROSOFT.COMPUTE/VIRTUALMACHINES/DEALLOCATE/ACTION','MICROSOFT.COMPUTE/VIRTUALMACHINES/POWEROFF/ACTION')\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, ResourceGroup, ResourceId, OperationNameValue\n| order by TimeGenerated desc"),
+        ("Heartbeat Gaps", "Heartbeat\n| where TimeGenerated >= ago(1h)\n| summarize LastBeat = max(TimeGenerated) by Computer, OSType\n| where LastBeat < ago(10m)\n| project Computer, OSType, LastBeat\n| order by LastBeat asc"),
+        ("Disk IO High", "Perf\n| where ObjectName == 'LogicalDisk' and CounterName == 'Disk Transfers/sec'\n| where InstanceName != '_Total' and InstanceName != 'C:'\n| where TimeGenerated >= ago(1d)\n| summarize AvgIOPS = avg(CounterValue) by Computer, InstanceName\n| where AvgIOPS > 500\n| order by AvgIOPS desc"),
+        ("VM Extension Failures", "AzureActivity\n| where OperationNameValue contains 'MICROSOFT.COMPUTE/VIRTUALMACHINES/EXTENSIONS'\n| where ActivityStatus == 'Failed'\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, ResourceGroup, ResourceId\n| order by TimeGenerated desc"),
+      ] %}
+      {% for name, query in vm_queries %}
+      <div class="col-md-4">
+        <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                onclick="sessionStorage.setItem('kql_prefill', {{ query | tojson }}); location.href='{{ url_for('kql_console') }}'">
+          <i class="bi bi-terminal me-1"></i>{{ name }}
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
 {% endblock %}
