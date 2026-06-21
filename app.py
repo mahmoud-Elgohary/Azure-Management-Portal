@@ -184,15 +184,17 @@ def dashboard():
             "sync": queries.last_sync_info(),
             "stats": stats,
             "mtd_cost": queries.get_mtd_total(),
+            "budget": config.MONTHLY_BUDGET,
             "advisor_cats": queries.advisor_category_summary(),
             "top_cost_rgs": queries.get_top_cost_resource_groups(6),
             "recent_activity": queries.get_recent_activity(8),
             "resource_counts": queries.get_resource_counts_by_type(),
             "health_summary": queries.health_summary(),
+            "security_score": queries.calculate_security_score(),
         }
     except Exception as exc:
         flash(_rbac_error(exc), "danger")
-        ctx = {"sync": queries.last_sync_info(), "stats": {}, "mtd_cost": 0}
+        ctx = {"sync": queries.last_sync_info(), "stats": {}, "mtd_cost": 0, "budget": config.MONTHLY_BUDGET}
     return render_template("dashboard.html", **ctx)
 
 
@@ -308,6 +310,32 @@ def sql_detail(resource_group, server_name):
         pools=pools,
         advisor_recs=advisor_recs,
         health_item=health_item,
+        sync=queries.last_sync_info(),
+    )
+
+
+# ── Elastic Pool detail ───────────────────────────────────────────────────────
+
+@app.route("/sql/<resource_group>/<server_name>/pools/<pool_name>")
+@login_required
+def elastic_pool_detail(resource_group, server_name, pool_name):
+    try:
+        pool = queries.get_elastic_pool_by_name(resource_group, server_name, pool_name)
+        if not pool:
+            flash(f"Elastic Pool '{pool_name}' not found.", "warning")
+            return redirect(url_for("sql_view"))
+        databases = queries.get_databases_in_pool(pool["pool_id"])
+        advisor_recs = queries.get_advisor_for_resource(pool["pool_id"])
+        server = queries.get_sql_server_by_name(resource_group, server_name)
+    except Exception as exc:
+        flash(_rbac_error(exc), "danger")
+        return redirect(url_for("sql_view"))
+    return render_template(
+        "elastic_pool_detail.html",
+        pool=pool,
+        databases=databases,
+        advisor_recs=advisor_recs,
+        server=server,
         sync=queries.last_sync_info(),
     )
 
@@ -600,16 +628,19 @@ def postgresql_detail(resource_group, server_name):
 @login_required
 def security_view():
     try:
-        summary       = queries.get_security_summary()
-        open_ports    = queries.get_open_nsg_ports()
-        high_risk     = queries.get_high_risk_ports()
-        score         = queries.calculate_security_score()
-        advisor_sec   = queries.get_advisor_recs(category="Security")
-        nsg_rules     = queries.get_nsg_rules()
-        gateways      = queries.get_app_gateways()
+        summary           = queries.get_security_summary()
+        open_ports        = queries.get_open_nsg_ports()
+        high_risk         = queries.get_high_risk_ports()
+        score             = queries.calculate_security_score()
+        advisor_sec       = queries.get_advisor_recs(category="Security")
+        nsg_rules         = queries.get_nsg_rules()
+        gateways          = queries.get_app_gateways()
+        sec_history       = queries.get_security_history(days=14)
+        public_ip_exposure = queries.get_public_ip_exposure()
     except Exception as exc:
         flash(_rbac_error(exc), "danger")
         summary, open_ports, high_risk, score, advisor_sec, nsg_rules, gateways = {}, [], [], {}, [], [], []
+        sec_history, public_ip_exposure = [], []
     return render_template(
         "security.html",
         summary=summary,
@@ -619,6 +650,8 @@ def security_view():
         advisor_security=advisor_sec,
         nsg_rules=nsg_rules,
         gateways=gateways,
+        sec_history=sec_history,
+        public_ip_exposure=public_ip_exposure,
         sync=queries.last_sync_info(),
     )
 
@@ -650,6 +683,78 @@ def waf_view():
     )
 
 
+@app.route("/waf/<resource_group>/<gw_name>")
+@login_required
+def appgateway_detail(resource_group, gw_name):
+    try:
+        gw = queries.get_appgateway_by_name(resource_group, gw_name)
+        if not gw:
+            flash(f"App Gateway '{gw_name}' not found.", "warning")
+            return redirect(url_for("waf_view"))
+        waf_rules = queries.get_waf_rules(gw_id=gw["gw_id"])
+        advisor_recs = queries.get_advisor_for_resource(gw["gw_id"])
+        health_item = queries.get_health_for_resource(gw["gw_id"])
+    except Exception as exc:
+        flash(_rbac_error(exc), "danger")
+        return redirect(url_for("waf_view"))
+    return render_template(
+        "appgateway_detail.html",
+        gw=gw,
+        waf_rules=waf_rules,
+        advisor_recs=advisor_recs,
+        health_item=health_item,
+        sync=queries.last_sync_info(),
+    )
+
+
+# ── Generic resource viewer (Storage, Key Vault, etc.) ───────────────────────
+
+@app.route("/resources")
+@login_required
+def resources_view():
+    rtype = request.args.get("type")
+    rg = request.args.get("rg")
+    q = request.args.get("q")
+    try:
+        items = queries.get_generic_resources(type_filter=rtype, rg_filter=rg, search_q=q)
+        type_counts = queries.get_generic_resource_type_counts()
+    except Exception as exc:
+        flash(_rbac_error(exc), "danger")
+        items, type_counts = [], {}
+    return render_template(
+        "resources.html",
+        items=items,
+        type_counts=type_counts,
+        selected_type=rtype,
+        selected_rg=rg,
+        selected_q=q,
+        resource_groups=queries.distinct_resource_groups(),
+        sync=queries.last_sync_info(),
+    )
+
+
+@app.route("/resources/<resource_group>/<path:resource_id_path>")
+@login_required
+def resource_detail(resource_group, resource_id_path):
+    try:
+        resource = queries.get_generic_resource_by_path(resource_group, resource_id_path)
+        if not resource:
+            flash("Resource not found in cache.", "warning")
+            return redirect(url_for("resources_view"))
+        advisor_recs = queries.get_advisor_for_resource(resource.get("resource_id", ""))
+        health_item = queries.get_health_for_resource(resource.get("resource_id", ""))
+    except Exception as exc:
+        flash(_rbac_error(exc), "danger")
+        return redirect(url_for("resources_view"))
+    return render_template(
+        "resource_detail.html",
+        resource=resource,
+        advisor_recs=advisor_recs,
+        health_item=health_item,
+        sync=queries.last_sync_info(),
+    )
+
+
 # ── Activity Center ───────────────────────────────────────────────────────────
 
 @app.route("/activity")
@@ -658,19 +763,29 @@ def activity_view():
     rg = request.args.get("rg")
     caller = request.args.get("caller")
     status = request.args.get("status")
+    op_filter = request.args.get("op")
+    limit = int(request.args.get("limit", 500))
     try:
-        events = queries.get_activity_log(resource_group=rg, caller=caller, status=status)
+        events = queries.get_activity_log(
+            resource_group=rg, caller=caller, status=status,
+            op_prefix=op_filter, limit=limit,
+        )
         summary = queries.activity_summary()
+        op_breakdown = queries.get_activity_op_breakdown()
+        daily_trend = queries.get_activity_daily_trend(7)
     except Exception as exc:
         flash(_rbac_error(exc), "danger")
-        events, summary = [], {}
+        events, summary, op_breakdown, daily_trend = [], {}, [], []
     return render_template(
         "activity.html",
         events=events,
         summary=summary,
+        op_breakdown=op_breakdown,
+        daily_trend=daily_trend,
         selected_rg=rg,
         selected_caller=caller,
         selected_status=status,
+        selected_op=op_filter,
         resource_groups=queries.distinct_resource_groups(),
         sync=queries.last_sync_info(),
     )

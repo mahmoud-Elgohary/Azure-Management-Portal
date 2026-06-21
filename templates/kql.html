@@ -34,10 +34,17 @@
       </ul>
 
       <!-- Blitz list -->
-      <div id="tab-blitz" class="card-body p-2 sidebar-tab-panel" style="max-height:520px;overflow-y:auto">
-        <div class="d-flex justify-content-end mb-1">
+      <div id="tab-blitz" class="card-body p-2 sidebar-tab-panel" style="max-height:580px;overflow-y:auto">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="d-flex gap-1 flex-wrap">
+            <button class="btn btn-xs cat-filter active" data-cat="all" onclick="filterCat('all', this)" style="font-size:.68rem;padding:.1rem .45rem;border-radius:10px;border:1px solid #d1d5db">All</button>
+            <button class="btn btn-xs cat-filter" data-cat="Security" onclick="filterCat('Security', this)" style="font-size:.68rem;padding:.1rem .45rem;border-radius:10px;border:1px solid #fee2e2;background:#fef2f2;color:#dc2626">🔴</button>
+            <button class="btn btn-xs cat-filter" data-cat="Operations" onclick="filterCat('Operations', this)" style="font-size:.68rem;padding:.1rem .45rem;border-radius:10px;border:1px solid #fef3c7;background:#fffbeb;color:#d97706">🟡</button>
+            <button class="btn btn-xs cat-filter" data-cat="Performance" onclick="filterCat('Performance', this)" style="font-size:.68rem;padding:.1rem .45rem;border-radius:10px;border:1px solid #dcfce7;background:#f0fdf4;color:#16a34a">🟢</button>
+            <button class="btn btn-xs cat-filter" data-cat="Compliance" onclick="filterCat('Compliance', this)" style="font-size:.68rem;padding:.1rem .45rem;border-radius:10px;border:1px solid #dbeafe;background:#eff6ff;color:#2563eb">🔵</button>
+          </div>
           <button class="btn btn-sm btn-link p-0 text-muted" onclick="showSaveModal()" title="Save current query">
-            <i class="bi bi-plus-circle"></i> Save current
+            <i class="bi bi-plus-circle"></i>
           </button>
         </div>
         {% if blitz %}
@@ -45,20 +52,23 @@
           {% set cat_labels = {'🔴': 'Security', '🟡': 'Operations', '🟢': 'Performance', '🔵': 'Compliance'} %}
           {% for q in blitz %}
             {% set first_char = q.name[:2] %}
-            {% set cat = cat_labels.get(first_char, '') %}
-            {% if cat and cat != ns.current_cat %}
+            {% set cat = cat_labels.get(first_char, 'Other') %}
+            {% if cat != ns.current_cat %}
               {% set ns.current_cat = cat %}
-              <div class="text-muted" style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin:.5rem 0 .2rem .25rem">
+              <div class="blitz-cat-header text-muted" data-cat="{{ cat }}" style="font-size:.67rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;margin:.6rem 0 .2rem .25rem">
                 {{ first_char }} {{ cat }}
               </div>
             {% endif %}
             <a class="blitz-query-item d-flex align-items-start gap-1" href="#"
-               onclick="loadBlitz({{ q.query | tojson }}); return false;"
-               title="{{ q.description or '' }}">
-              <i class="bi bi-terminal mt-1 flex-shrink-0"></i>
+               data-cat="{{ cat }}"
+               data-query="{{ q.query | e }}"
+               data-desc="{{ (q.description or '') | e }}"
+               onclick="loadBlitz({{ q.query | tojson }}, {{ (q.description or '') | tojson }}, {{ q.name[2:] | trim | tojson }}); return false;"
+               title="{{ q.description or q.name }}">
+              <i class="bi bi-terminal mt-1 flex-shrink-0 text-muted" style="font-size:.8rem"></i>
               <div>
-                <div style="font-size:.83rem">{{ q.name[2:] | trim }}</div>
-                {% if q.description %}<small class="text-muted">{{ q.description[:55] }}</small>{% endif %}
+                <div style="font-size:.82rem;line-height:1.3">{{ q.name[2:] | trim }}</div>
+                {% if q.description %}<small class="text-muted" style="font-size:.72rem">{{ q.description[:60] }}</small>{% endif %}
               </div>
             </a>
           {% endfor %}
@@ -77,6 +87,16 @@
 
   <!-- Main editor + results -->
   <div class="col-lg-9">
+
+    <!-- Query description banner (shown when blitz query loaded) -->
+    <div id="query-desc-banner" class="alert alert-info d-flex align-items-center gap-2 py-2 mb-2" style="display:none!important;font-size:.83rem">
+      <i class="bi bi-info-circle-fill"></i>
+      <div>
+        <strong id="query-desc-title"></strong>
+        <span id="query-desc-text" class="ms-2 text-muted"></span>
+      </div>
+      <button class="btn btn-sm btn-link ms-auto p-0 text-muted" onclick="hideDescBanner()"><i class="bi bi-x"></i></button>
+    </div>
 
     <!-- Editor card -->
     <div class="card mb-3">
@@ -193,7 +213,7 @@ async function loadHistory() {
     }
     el.innerHTML = hist.map(h => `
       <a class="blitz-query-item d-flex align-items-start gap-1" href="#"
-         onclick="loadBlitz(${JSON.stringify(h.query)}); return false;"
+         onclick="loadBlitz(${JSON.stringify(h.query)}, '', ''); return false;"
          title="${esc(h.query)}">
         <i class="bi bi-clock mt-1 text-muted"></i>
         <div>
@@ -217,9 +237,33 @@ function clearEditor() {
 }
 
 /* ── Blitz queries ─────────────────────────────────────────────────── */
-function loadBlitz(query) {
+function loadBlitz(query, desc, title) {
   document.getElementById('kql-editor').value = query;
+  if (desc || title) {
+    document.getElementById('query-desc-title').textContent = title || '';
+    document.getElementById('query-desc-text').textContent  = desc  || '';
+    document.getElementById('query-desc-banner').style.display = '';
+  } else {
+    document.getElementById('query-desc-banner').style.display = 'none';
+  }
   runQuery();
+}
+
+function hideDescBanner() {
+  document.getElementById('query-desc-banner').style.display = 'none';
+}
+
+/* ── Category filter ───────────────────────────────────────────────── */
+function filterCat(cat, btn) {
+  document.querySelectorAll('.cat-filter').forEach(b => {
+    b.style.fontWeight = '';
+    b.style.outline = '';
+  });
+  btn.style.fontWeight = '700';
+  btn.style.outline = '2px solid currentColor';
+  document.querySelectorAll('.blitz-query-item, .blitz-cat-header').forEach(el => {
+    el.style.display = (cat === 'all' || el.dataset.cat === cat) ? '' : 'none';
+  });
 }
 
 /* ── Run query ─────────────────────────────────────────────────────── */

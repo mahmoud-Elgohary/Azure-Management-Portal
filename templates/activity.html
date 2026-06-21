@@ -2,12 +2,17 @@
 {% block title %}Activity Center — WTS Azure Manager{% endblock %}
 {% block page_title %}Activity Center{% endblock %}
 
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
 {% block content %}
 
 <!-- KPI row -->
 <div class="row g-3 mb-4">
   <div class="col-6 col-lg-3">
     <div class="card kpi-card">
+      <i class="bi bi-activity kpi-icon"></i>
       <div class="kpi-value text-primary">{{ summary.get('total', 0) }}</div>
       <div class="kpi-label">Total Events</div>
       <div class="kpi-sub">In cache (last 7 days)</div>
@@ -15,6 +20,7 @@
   </div>
   <div class="col-6 col-lg-3">
     <div class="card kpi-card">
+      <i class="bi bi-x-octagon kpi-icon"></i>
       <div class="kpi-value {% if summary.get('failed', 0) %}text-danger{% else %}text-success{% endif %}">
         {{ summary.get('failed', 0) }}
       </div>
@@ -24,6 +30,7 @@
   </div>
   <div class="col-6 col-lg-3">
     <div class="card kpi-card">
+      <i class="bi bi-clock-history kpi-icon"></i>
       <div class="kpi-value text-primary">{{ summary.get('recent_24h', 0) }}</div>
       <div class="kpi-label">Last 24 Hours</div>
       <div class="kpi-sub">Recent activity</div>
@@ -31,6 +38,7 @@
   </div>
   <div class="col-6 col-lg-3">
     <div class="card kpi-card">
+      <i class="bi bi-person-circle kpi-icon"></i>
       <div class="kpi-value text-muted">
         {{ summary.get('top_callers', [{}])[0].get('cnt', 0) if summary.get('top_callers') else 0 }}
       </div>
@@ -52,7 +60,69 @@
 </div>
 {% endif %}
 
-<!-- Filters -->
+<!-- Charts row -->
+{% if op_breakdown or daily_trend %}
+<div class="row g-3 mb-4">
+  {% if op_breakdown %}
+  <div class="col-lg-5">
+    <div class="card h-100">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-bar-chart-horizontal me-1"></i> Operation Categories
+        <span class="badge bg-secondary ms-2">{{ op_breakdown | length }}</span>
+      </div>
+      <div class="card-body">
+        <canvas id="opBreakdownChart" height="200"></canvas>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+  {% if daily_trend %}
+  <div class="col-lg-7">
+    <div class="card h-100">
+      <div class="card-header"><i class="bi bi-graph-up me-1"></i> 7-Day Activity Trend</div>
+      <div class="card-body">
+        <canvas id="trendChart" height="160"></canvas>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- Quick filter pills -->
+<div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+  <span class="small text-muted fw-500">Quick Filter:</span>
+  <a href="{{ url_for('activity_view') }}"
+     class="btn btn-sm {% if not selected_status and not selected_op %}btn-secondary{% else %}btn-outline-secondary{% endif %}">
+    All
+  </a>
+  <a href="{{ url_for('activity_view', status='Failed') }}"
+     class="btn btn-sm {% if selected_status == 'Failed' %}btn-danger{% else %}btn-outline-danger{% endif %}">
+    <i class="bi bi-x-circle me-1"></i>Failed Ops
+  </a>
+  <a href="{{ url_for('activity_view', op='Microsoft.Authorization/roleAssignments') }}"
+     class="btn btn-sm {% if selected_op == 'Microsoft.Authorization/roleAssignments' %}btn-warning text-dark{% else %}btn-outline-warning{% endif %}">
+    <i class="bi bi-shield-lock me-1"></i>Role Changes
+  </a>
+  <a href="{{ url_for('activity_view', op='Microsoft.Network/networkSecurityGroups') }}"
+     class="btn btn-sm {% if selected_op == 'Microsoft.Network/networkSecurityGroups' %}btn-info text-dark{% else %}btn-outline-info{% endif %}">
+    <i class="bi bi-shield-shaded me-1"></i>NSG Changes
+  </a>
+  <a href="{{ url_for('activity_view', op='Microsoft.Compute/virtualMachines') }}"
+     class="btn btn-sm {% if selected_op == 'Microsoft.Compute/virtualMachines' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+    <i class="bi bi-server me-1"></i>VM Operations
+  </a>
+  <a href="{{ url_for('activity_view', op='Microsoft.KeyVault/vaults') }}"
+     class="btn btn-sm {% if selected_op == 'Microsoft.KeyVault/vaults' %}btn-success{% else %}btn-outline-success{% endif %}">
+    <i class="bi bi-key me-1"></i>Key Vault
+  </a>
+  <a href="{{ url_for('activity_view', op='Microsoft.Authorization/policyAssignments') }}"
+     class="btn btn-sm {% if selected_op == 'Microsoft.Authorization/policyAssignments' %}btn-dark{% else %}btn-outline-dark{% endif %}">
+    <i class="bi bi-journal-code me-1"></i>Policy Changes
+  </a>
+</div>
+
+<!-- Advanced Filters -->
 <form class="d-flex flex-wrap align-items-center gap-2 mb-3" method="get">
   <label class="small fw-500">Filter:</label>
   <select name="rg" class="form-select form-select-sm w-auto" onchange="this.form.submit()">
@@ -67,13 +137,21 @@
     <option value="{{ st }}" {% if selected_status == st %}selected{% endif %}>{{ st }}</option>
     {% endfor %}
   </select>
-  <input type="text" name="caller" class="form-control form-control-sm w-auto"
-         placeholder="Caller filter…" value="{{ selected_caller or '' }}" />
+  <input type="text" name="caller" class="form-control form-control-sm"
+         style="width:200px" placeholder="Caller filter…" value="{{ selected_caller or '' }}" />
+  {% if selected_op %}
+  <input type="hidden" name="op" value="{{ selected_op }}" />
+  {% endif %}
   <button type="submit" class="btn btn-sm btn-outline-secondary">Apply</button>
-  {% if selected_rg or selected_status or selected_caller %}
+  {% if selected_rg or selected_status or selected_caller or selected_op %}
   <a href="{{ url_for('activity_view') }}" class="btn btn-sm btn-outline-secondary">Clear</a>
   {% endif %}
-  <span class="ms-auto text-muted small">{{ events | length }} events</span>
+  <span class="ms-auto d-flex align-items-center gap-2">
+    <span class="text-muted small">{{ events | length }} events</span>
+    <button type="button" class="btn btn-sm btn-outline-success" onclick="exportCsv()">
+      <i class="bi bi-download me-1"></i>Export CSV
+    </button>
+  </span>
 </form>
 
 <!-- Event table -->
@@ -81,7 +159,7 @@
   <div class="card-body p-0">
     {% if events %}
     <div class="table-responsive" style="max-height:600px;overflow-y:auto">
-      <table class="table table-sm table-hover mb-0">
+      <table class="table table-sm table-hover mb-0" id="events-table">
         <thead class="table-dark sticky-top">
           <tr>
             <th>Timestamp</th>
@@ -99,13 +177,18 @@
               <small>{{ (ev.event_timestamp or '')[:19].replace('T',' ') }}</small>
             </td>
             <td>
-              <span class="text-truncate d-block" style="max-width:280px" title="{{ ev.operation_name }}">
+              <span class="text-truncate d-block" style="max-width:300px" title="{{ ev.operation_name }}">
                 <small>{{ ev.operation_name or '—' }}</small>
               </span>
             </td>
             <td>
               <small class="text-muted" title="{{ ev.caller }}">
-                {{ (ev.caller or '—')[:40] }}
+                {% set c = ev.caller or '—' %}
+                {% if '@' in c %}
+                  <a href="{{ url_for('activity_view', caller=c) }}" class="text-decoration-none">{{ c[:40] }}</a>
+                {% else %}
+                  {{ c[:40] }}
+                {% endif %}
               </small>
             </td>
             <td><small>{{ ev.resource_group or '—' }}</small></td>
@@ -133,7 +216,7 @@
       <i class="bi bi-activity fs-1 d-block mb-2"></i>
       <h6>No activity events found</h6>
       <p class="small mb-0">
-        {% if selected_rg or selected_status or selected_caller %}
+        {% if selected_rg or selected_status or selected_caller or selected_op %}
           No events match the current filters. <a href="{{ url_for('activity_view') }}">Clear filters</a>
         {% else %}
           Sync hasn't completed or Log Analytics workspace is not configured.
@@ -144,47 +227,58 @@
   </div>
 </div>
 
-{% if summary.get('top_callers') %}
-<div class="card mt-3">
-  <div class="card-header"><i class="bi bi-person-circle me-1"></i> Top Callers</div>
-  <div class="card-body p-0">
-    <table class="table table-sm mb-0">
-      <thead class="table-light"><tr><th>Caller</th><th class="text-end">Events</th></tr></thead>
-      <tbody>
-        {% for c in summary.get('top_callers', []) %}
-        <tr>
-          <td>
-            <a href="{{ url_for('activity_view', caller=c.caller) }}" class="text-decoration-none">
-              {{ c.caller or '(system)' }}
-            </a>
-          </td>
-          <td class="text-end fw-500">{{ c.cnt }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-{% endif %}
-
-<!-- KQL investigation quick-launch -->
-<div class="card mt-3">
-  <div class="card-header"><i class="bi bi-terminal me-1"></i> Quick KQL Investigations</div>
-  <div class="card-body">
-    <div class="row g-2">
-      {% for label, hint in [
-        ('Failed operations last 24h', 'AzureActivity\n| where ActivityStatusValue == "Failed"\n| where TimeGenerated >= ago(1d)\n| project TimeGenerated, Caller, OperationNameValue, ResourceGroup\n| order by TimeGenerated desc'),
-        ('Role assignments last 7d', 'AzureActivity\n| where OperationNameValue contains "roleAssignment"\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, OperationNameValue, ResourceGroup\n| order by TimeGenerated desc'),
-        ('VM start/stop events', 'AzureActivity\n| where OperationNameValue contains "deallocate" or OperationNameValue contains "start"\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, OperationNameValue, ResourceGroup, ActivityStatusValue\n| order by TimeGenerated desc'),
-        ('NSG rule changes', 'AzureActivity\n| where OperationNameValue contains "networkSecurityGroups"\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, OperationNameValue, ResourceGroup, ActivityStatusValue\n| order by TimeGenerated desc'),
-      ] %}
-      <div class="col-md-3">
-        <button class="btn btn-sm btn-outline-secondary w-100 text-start"
-                onclick="openKql({{ hint | tojson }})">
-          <i class="bi bi-terminal me-1"></i>{{ label }}
-        </button>
+<!-- Bottom row: Top Callers + KQL Investigations -->
+<div class="row g-3 mt-1">
+  {% if summary.get('top_callers') %}
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header"><i class="bi bi-person-circle me-1"></i> Top Callers</div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+          <thead class="table-light"><tr><th>Caller</th><th class="text-end">Events</th></tr></thead>
+          <tbody>
+            {% for c in summary.get('top_callers', []) %}
+            <tr>
+              <td>
+                <a href="{{ url_for('activity_view', caller=c.caller) }}" class="text-decoration-none">
+                  <small>{{ c.caller or '(system)' }}</small>
+                </a>
+              </td>
+              <td class="text-end fw-500">{{ c.cnt }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
-      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="col-lg-8">
+    <div class="card h-100">
+      <div class="card-header"><i class="bi bi-terminal me-1"></i> KQL Investigations</div>
+      <div class="card-body">
+        <div class="row g-2">
+          {% set kql_list = [
+            ('Failed Operations 24h', 'AzureActivity\n| where ActivityStatusValue == "Failed"\n| where TimeGenerated >= ago(1d)\n| project TimeGenerated, Caller, OperationNameValue, ResourceGroup, SubscriptionId\n| order by TimeGenerated desc'),
+            ('Role Changes 7d', 'AzureActivity\n| where OperationNameValue contains "roleAssignment"\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, OperationNameValue, ResourceGroup, ActivityStatusValue\n| order by TimeGenerated desc'),
+            ('VM Start/Stop Events', 'AzureActivity\n| where OperationNameValue contains "deallocate" or OperationNameValue contains "start"\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, OperationNameValue, ResourceGroup, ActivityStatusValue\n| order by TimeGenerated desc'),
+            ('NSG Rule Changes', 'AzureActivity\n| where OperationNameValue contains "networkSecurityGroups"\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, OperationNameValue, ResourceGroup, ActivityStatusValue\n| order by TimeGenerated desc'),
+            ('Key Vault Activity', 'AzureActivity\n| where ResourceProviderValue == "Microsoft.KeyVault"\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, OperationNameValue, ResourceGroup, ActivityStatusValue\n| order by TimeGenerated desc'),
+            ('Policy Assignment Changes', 'AzureActivity\n| where OperationNameValue contains "policyAssignment"\n| where TimeGenerated >= ago(30d)\n| project TimeGenerated, Caller, OperationNameValue, ResourceGroup, ActivityStatusValue\n| order by TimeGenerated desc'),
+            ('Suspicious Sign-ins', 'SigninLogs\n| where TimeGenerated >= ago(1d)\n| where ResultType != 0\n| where RiskLevelDuringSignIn in ("high","medium")\n| project TimeGenerated, UserPrincipalName, Location, AppDisplayName, RiskLevelDuringSignIn, ResultDescription\n| order by TimeGenerated desc'),
+            ('Storage Account Changes', 'AzureActivity\n| where ResourceProviderValue == "Microsoft.Storage"\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, OperationNameValue, ResourceGroup, ActivityStatusValue\n| order by TimeGenerated desc'),
+          ] %}
+          {% for label, query in kql_list %}
+          <div class="col-md-6">
+            <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                    onclick="openKql({{ query | tojson }})">
+              <i class="bi bi-terminal me-1"></i>{{ label }}
+            </button>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -197,5 +291,97 @@ function openKql(query) {
   sessionStorage.setItem('kql_prefill', query);
   location.href = '{{ url_for("kql_console") }}';
 }
+
+function exportCsv() {
+  const table = document.getElementById('events-table');
+  if (!table) return;
+  const rows = [];
+  const headers = [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());
+  rows.push(headers.join(','));
+  table.querySelectorAll('tbody tr').forEach(tr => {
+    if (tr.style.display === 'none') return;
+    const cells = [...tr.querySelectorAll('td')].map(td => {
+      const val = (td.textContent || td.innerText).trim().replace(/\s+/g, ' ');
+      return '"' + val.replace(/"/g, '""') + '"';
+    });
+    rows.push(cells.join(','));
+  });
+  const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'activity_log_' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+}
+
+{% if op_breakdown %}
+(function() {
+  const labels = {{ op_breakdown | map(attribute='category') | list | tojson }};
+  const counts = {{ op_breakdown | map(attribute='count') | list | tojson }};
+  new Chart(document.getElementById('opBreakdownChart'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        data: counts,
+        backgroundColor: [
+          '#0d6efd','#dc3545','#ffc107','#198754','#0dcaf0',
+          '#6610f2','#fd7e14','#6c757d','#20c997','#d63384'
+        ],
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { beginAtZero: true, ticks: { stepSize: 1 } },
+        y: { ticks: { font: { size: 11 } } }
+      },
+      onClick(_, elements) {
+        if (!elements.length) return;
+        const catMap = {
+          'VM Operations': 'Microsoft.Compute/virtualMachines',
+          'NSG Changes': 'Microsoft.Network/networkSecurityGroups',
+          'Role Assignments': 'Microsoft.Authorization/roleAssignments',
+          'Storage': 'Microsoft.Storage/storageAccounts',
+          'Key Vault': 'Microsoft.KeyVault/vaults',
+          'SQL / PostgreSQL': 'Microsoft.Sql',
+          'App Gateway / WAF': 'Microsoft.Network/applicationGateways',
+          'Policy': 'Microsoft.Authorization/policyAssignments',
+          'Network (other)': 'Microsoft.Network',
+          'Compute (other)': 'Microsoft.Compute',
+        };
+        const cat = labels[elements[0].index];
+        const op = catMap[cat];
+        if (op) location.href = '{{ url_for("activity_view") }}?op=' + encodeURIComponent(op);
+      }
+    }
+  });
+})();
+{% endif %}
+
+{% if daily_trend %}
+(function() {
+  const days   = {{ daily_trend | map(attribute='day') | list | tojson }};
+  const totals = {{ daily_trend | map(attribute='total') | list | tojson }};
+  const failed = {{ daily_trend | map(attribute='failed') | list | tojson }};
+  new Chart(document.getElementById('trendChart'), {
+    type: 'line',
+    data: {
+      labels: days,
+      datasets: [
+        { label: 'Total', data: totals, borderColor: '#0d6efd', backgroundColor: 'rgba(13,110,253,.1)', fill: true, tension: 0.3 },
+        { label: 'Failed', data: failed, borderColor: '#dc3545', backgroundColor: 'rgba(220,53,69,.08)', fill: true, tension: 0.3 }
+      ]
+    },
+    options: {
+      plugins: { legend: { position: 'top' } },
+      scales: {
+        y: { beginAtZero: true, ticks: { stepSize: 1 } }
+      }
+    }
+  });
+})();
+{% endif %}
 </script>
 {% endblock %}

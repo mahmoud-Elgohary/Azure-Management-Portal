@@ -4,46 +4,92 @@
 
 {% block head %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
+<style>
+.view-btn { font-size:.8rem; padding:.25rem .65rem; }
+.view-btn.active { background:#0078d4!important; color:#fff!important; border-color:#0078d4!important; }
+#topo-toolbar { background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:.5rem .75rem; margin-bottom:.75rem; display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+.legend-section { display:flex; gap:.75rem; flex-wrap:wrap; align-items:center; }
+.topo-legend-item { display:flex; align-items:center; gap:.3rem; font-size:.76rem; color:#374151; }
+.topo-legend-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+.topo-divider { width:1px; height:20px; background:#e5e7eb; margin:0 .25rem; }
+</style>
 {% endblock %}
 
 {% block content %}
 
-<div class="d-flex align-items-center gap-3 mb-3">
-  <div class="topo-legend">
+<!-- Toolbar -->
+<div id="topo-toolbar">
+
+  <!-- View modes -->
+  <div class="d-flex gap-1 align-items-center">
+    <span class="text-muted small me-1" style="white-space:nowrap">View:</span>
+    <button class="btn btn-sm btn-outline-secondary view-btn active" data-view="all" onclick="setView('all', this)">All</button>
+    <button class="btn btn-sm btn-outline-secondary view-btn" data-view="network" onclick="setView('network', this)">Network</button>
+    <button class="btn btn-sm btn-outline-secondary view-btn" data-view="compute" onclick="setView('compute', this)">Compute</button>
+    <button class="btn btn-sm btn-outline-secondary view-btn" data-view="database" onclick="setView('database', this)">Database</button>
+    <button class="btn btn-sm btn-outline-secondary view-btn" data-view="security" onclick="setView('security', this)">Security</button>
+  </div>
+
+  <div class="topo-divider"></div>
+
+  <!-- RG filter -->
+  <select id="rg-filter" class="form-select form-select-sm" style="width:auto;max-width:200px" onchange="loadTopology()">
+    <option value="">All resource groups</option>
+  </select>
+
+  <!-- Search -->
+  <div class="position-relative">
+    <input type="text" id="node-search" class="form-control form-control-sm" placeholder="Search nodes…" style="width:150px"
+           oninput="searchNodes(this.value)" />
+  </div>
+
+  <!-- Layout -->
+  <select id="layout-picker" class="form-select form-select-sm" style="width:auto">
+    <option value="cose">Force-directed</option>
+    <option value="breadthfirst">Hierarchical</option>
+    <option value="circle">Circle</option>
+    <option value="grid">Grid</option>
+    <option value="concentric">Concentric</option>
+  </select>
+
+  <div class="ms-auto d-flex gap-1 align-items-center">
+    <span id="topo-stats" class="badge bg-secondary" style="display:none"></span>
+    <button class="btn btn-sm btn-outline-secondary" onclick="fitGraph()" title="Fit all nodes"><i class="bi bi-fullscreen"></i></button>
+    <button class="btn btn-sm btn-outline-secondary" onclick="loadTopology()" title="Refresh"><i class="bi bi-arrow-repeat"></i></button>
+    <div class="dropdown">
+      <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" title="Export">
+        <i class="bi bi-download"></i>
+      </button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><a class="dropdown-item small" href="#" onclick="exportPNG(); return false;"><i class="bi bi-image me-2"></i>Export PNG</a></li>
+        <li><a class="dropdown-item small" href="#" onclick="exportSVG(); return false;"><i class="bi bi-filetype-svg me-2"></i>Export SVG</a></li>
+        <li><a class="dropdown-item small" href="#" onclick="exportJSON(); return false;"><i class="bi bi-filetype-json me-2"></i>Export JSON</a></li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+
+<!-- Legend -->
+<div class="mb-2 px-1">
+  <div class="legend-section">
     <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#0078d4"></div> VM</div>
     <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#7c3aed"></div> VNet</div>
     <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#a78bfa"></div> Subnet</div>
-    <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#059669"></div> SQL</div>
+    <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#059669"></div> SQL Server</div>
+    <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#0891b2"></div> PostgreSQL</div>
     <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#6b7280"></div> NIC</div>
     <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#f59e0b"></div> Public IP</div>
     <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#dc2626"></div> NSG</div>
-    <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#0891b2"></div> PostgreSQL</div>
-    <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#374151"></div> On-prem (logical)</div>
-  </div>
-  <div class="ms-auto d-flex gap-2 flex-wrap align-items-center">
-    <div class="position-relative">
-      <input type="text" id="node-search" class="form-control form-control-sm" placeholder="Search nodes…" style="width:160px"
-             oninput="searchNodes(this.value)" />
-    </div>
-    <select id="rg-filter" class="form-select form-select-sm" style="width:auto" onchange="loadTopology()">
-      <option value="">All resource groups</option>
-    </select>
-    <select id="layout-picker" class="form-select form-select-sm" style="width:auto">
-      <option value="cose">Force-directed</option>
-      <option value="breadthfirst">Hierarchical</option>
-      <option value="circle">Circle</option>
-      <option value="grid">Grid</option>
-    </select>
-    <button class="btn btn-sm btn-outline-secondary" onclick="fitGraph()"><i class="bi bi-fullscreen"></i> Fit</button>
-    <button class="btn btn-sm btn-outline-secondary" onclick="loadTopology()"><i class="bi bi-arrow-repeat"></i> Refresh</button>
-    <span id="topo-stats" class="badge bg-secondary align-self-center" style="display:none"></span>
+    <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#ea580c"></div> App Gateway</div>
+    <div class="topo-legend-item"><div class="topo-legend-dot" style="background:#374151;border:1.5px dashed #9ca3af"></div> On-prem (logical)</div>
   </div>
 </div>
 
-<!-- Topology canvas (or fallback) -->
+<!-- Topology canvas -->
 <div id="topology-cy"></div>
 
-<!-- Fallback list (shown if Cytoscape or data fails) -->
+<!-- Fallback -->
 <div id="topology-fallback" style="display:none">
   <div class="permission-banner mb-3">
     <i class="bi bi-exclamation-triangle"></i>
@@ -56,28 +102,76 @@
 </div>
 
 <!-- Node detail panel -->
-<div id="node-panel" class="card" style="display:none;position:fixed;bottom:1.5rem;right:1.5rem;width:280px;z-index:1100;box-shadow:0 4px 20px rgba(0,0,0,.15)">
-  <div class="card-header d-flex align-items-center">
-    <span id="node-panel-title" class="fw-bold"></span>
+<div id="node-panel" class="card" style="display:none;position:fixed;bottom:1.5rem;right:1.5rem;width:300px;z-index:1100;box-shadow:0 4px 24px rgba(0,0,0,.18)">
+  <div class="card-header d-flex align-items-center py-2">
+    <span id="node-panel-icon" class="me-2" style="font-size:1.1rem"></span>
+    <span id="node-panel-title" class="fw-600" style="font-size:.88rem"></span>
     <button class="btn btn-sm btn-link ms-auto p-0 text-muted" onclick="document.getElementById('node-panel').style.display='none'">
       <i class="bi bi-x-lg"></i>
     </button>
   </div>
-  <div class="card-body p-2" id="node-panel-body" style="font-size:.82rem"></div>
+  <div class="card-body p-2" id="node-panel-body" style="font-size:.82rem;max-height:300px;overflow-y:auto"></div>
 </div>
 
-<!-- Edge legend -->
-<div class="mt-2 text-muted" style="font-size:.75rem">
-  <i class="bi bi-dash-lg"></i> Solid lines = API-derived (ARM/Resource Graph) &nbsp;·&nbsp;
-  <i class="bi bi-three-dots"></i> Dashed lines = logical (from topology_config.json)
+<div class="mt-2 text-muted" style="font-size:.73rem">
+  <i class="bi bi-dash-lg"></i> Solid = ARM-derived &nbsp;·&nbsp; <i class="bi bi-three-dots"></i> Dashed = logical (topology_config.json)
+  &nbsp;·&nbsp; Click any node for details &nbsp;·&nbsp; Scroll to zoom &nbsp;·&nbsp; Drag to pan
 </div>
+
 {% endblock %}
 
 {% block scripts %}
 <script>
 let cy = null;
+let _allNodes = [], _allEdges = [], _currentView = 'all';
 
-// Populate RG filter from VMs / VNets
+const COLOR_MAP = {
+  vm:          '#0078d4',
+  vnet:        '#7c3aed',
+  subnet:      '#a78bfa',
+  sql:         '#059669',
+  nic:         '#6b7280',
+  pip:         '#f59e0b',
+  nsg:         '#dc2626',
+  postgresql:  '#0891b2',
+  appgateway:  '#ea580c',
+  onprem:      '#374151',
+  default:     '#9ca3af',
+};
+
+const SHAPE_MAP = {
+  vm:         'rectangle',
+  vnet:       'round-rectangle',
+  subnet:     'round-rectangle',
+  sql:        'diamond',
+  nic:        'ellipse',
+  pip:        'star',
+  nsg:        'hexagon',
+  postgresql: 'barrel',
+  appgateway: 'cut-rectangle',
+};
+
+const ICON_MAP = {
+  vm:         '🖥️',
+  vnet:       '🌐',
+  subnet:     '📡',
+  sql:        '🗄️',
+  nic:        '🔌',
+  pip:        '🔵',
+  nsg:        '🛡️',
+  postgresql: '🐘',
+  appgateway: '🚪',
+};
+
+// View-mode type filters
+const VIEW_TYPES = {
+  all:      null,  // show everything
+  network:  ['vnet', 'subnet', 'nic', 'pip', 'nsg', 'appgateway'],
+  compute:  ['vm', 'nic', 'pip'],
+  database: ['sql', 'postgresql'],
+  security: ['nsg', 'pip', 'appgateway', 'vm'],
+};
+
 async function populateRgFilter() {
   try {
     const r = await fetch('/api/topology');
@@ -93,51 +187,66 @@ async function populateRgFilter() {
   } catch(e) {}
 }
 
+function setView(view, btn) {
+  _currentView = view;
+  document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  applyViewFilter();
+}
+
+function applyViewFilter() {
+  if (!cy) return;
+  const allowed = VIEW_TYPES[_currentView];
+  if (!allowed) {
+    cy.nodes().style('display', 'element');
+    cy.edges().style('display', 'element');
+  } else {
+    cy.nodes().forEach(n => {
+      const show = allowed.includes(n.data('type')) || n.data('logical');
+      n.style('display', show ? 'element' : 'none');
+    });
+    cy.edges().forEach(e => {
+      const srcVis = e.source().style('display') !== 'none';
+      const tgtVis = e.target().style('display') !== 'none';
+      e.style('display', (srcVis && tgtVis) ? 'element' : 'none');
+    });
+  }
+  cy.fit(30);
+}
+
 async function loadTopology() {
-  const rg = document.getElementById('rg-filter')?.value || '';
+  const rg  = document.getElementById('rg-filter')?.value || '';
   const url = '/api/topology' + (rg ? '?rg=' + encodeURIComponent(rg) : '');
+  document.getElementById('topology-cy').innerHTML = '<div class="d-flex align-items-center justify-content-center h-100 text-muted"><div class="spinner-border spinner-border-sm me-2"></div> Loading topology…</div>';
+  document.getElementById('topology-cy').style.display = '';
+  document.getElementById('topology-fallback').style.display = 'none';
+
   try {
-    const r = await fetch(url);
+    const r    = await fetch(url);
     const data = await r.json();
 
-    if (data.error || (!data.nodes?.length)) {
-      showFallback(data.error || 'No topology data. Sync the portal first — network resources (VNets, NICs, public IPs) must be synced.');
+    if (data.error || !data.nodes?.length) {
+      showFallback(data.error || 'No topology data. Sync the portal first.');
       return;
     }
 
+    _allNodes = data.nodes;
+    _allEdges = data.edges || [];
+
     const statsEl = document.getElementById('topo-stats');
-    if (statsEl) {
-      statsEl.textContent = `${data.node_count || data.nodes.length} nodes · ${data.edge_count || (data.edges||[]).length} edges`;
-      statsEl.style.display = '';
-    }
+    statsEl.textContent = `${data.node_count || data.nodes.length} nodes · ${data.edge_count || _allEdges.length} edges`;
+    statsEl.style.display = '';
 
-    if (data.nodes.length > 300) {
-      const banner = document.getElementById('topology-fallback');
-      document.getElementById('topo-error-detail').textContent =
-        `Large graph: ${data.nodes.length} nodes. Use the resource group filter to narrow the view.`;
-      // still render, but warn
-    }
-
-    renderCytoscape(data.nodes, data.edges || []);
+    renderCytoscape(_allNodes, _allEdges);
   } catch(e) {
     showFallback('Failed to load topology: ' + e.message);
   }
 }
-populateRgFilter();
 
 function renderCytoscape(nodes, edges) {
+  document.getElementById('topology-cy').innerHTML = '';
   document.getElementById('topology-cy').style.display = '';
   document.getElementById('topology-fallback').style.display = 'none';
-
-  const colorMap = {
-    vm: '#0078d4', vnet: '#7c3aed', subnet: '#a78bfa', sql: '#059669',
-    nic: '#6b7280', pip: '#f59e0b', nsg: '#dc2626', postgresql: '#0891b2',
-    onprem: '#374151', default: '#9ca3af'
-  };
-  const shapeMap = {
-    vm: 'rectangle', vnet: 'round-rectangle', subnet: 'round-rectangle',
-    sql: 'diamond', nic: 'ellipse', pip: 'star', nsg: 'hexagon', postgresql: 'barrel'
-  };
 
   cy = cytoscape({
     container: document.getElementById('topology-cy'),
@@ -146,34 +255,36 @@ function renderCytoscape(nodes, edges) {
       {
         selector: 'node',
         style: {
-          'background-color': n => colorMap[n.data('type')] || colorMap.default,
+          'background-color': n => COLOR_MAP[n.data('type')] || COLOR_MAP.default,
           'label': 'data(label)',
           'font-size': '10px',
           'color': '#1a1a2e',
           'text-valign': 'bottom',
-          'text-margin-y': '4px',
-          'shape': n => shapeMap[n.data('type')] || 'ellipse',
-          'width': n => ['vnet','subnet'].includes(n.data('type')) ? 50 : 30,
-          'height': n => ['vnet','subnet'].includes(n.data('type')) ? 50 : 30,
+          'text-margin-y': '5px',
+          'shape': n => SHAPE_MAP[n.data('type')] || 'ellipse',
+          'width': n => ['vnet','subnet'].includes(n.data('type')) ? 52 : 32,
+          'height': n => ['vnet','subnet'].includes(n.data('type')) ? 52 : 32,
           'border-width': 2,
           'border-color': '#fff',
           'padding': '8px',
+          'text-max-width': '100px',
+          'text-wrap': 'ellipsis',
         }
       },
       {
         selector: 'node[?logical]',
-        style: { 'border-style': 'dashed', 'border-color': '#6b7280', 'border-width': 2 }
+        style: { 'border-style': 'dashed', 'border-color': '#6b7280', 'border-width': 2, 'background-color': '#f9fafb' }
       },
       {
         selector: 'node:selected',
-        style: { 'border-color': '#0078d4', 'border-width': 3 }
+        style: { 'border-color': '#0078d4', 'border-width': 3, 'box-shadow': '0 0 0 4px rgba(0,120,212,.25)' }
       },
       {
         selector: 'edge',
         style: {
           'width': 1.5,
-          'line-color': '#9ca3af',
-          'target-arrow-color': '#9ca3af',
+          'line-color': '#c4c9d3',
+          'target-arrow-color': '#c4c9d3',
           'target-arrow-shape': 'triangle',
           'curve-style': 'bezier',
           'label': 'data(label)',
@@ -184,31 +295,45 @@ function renderCytoscape(nodes, edges) {
       },
       {
         selector: 'edge[type="logical"]',
-        style: {
-          'line-style': 'dashed',
-          'line-color': '#6b7280',
-          'target-arrow-color': '#6b7280',
-        }
+        style: { 'line-style': 'dashed', 'line-color': '#94a3b8', 'target-arrow-color': '#94a3b8' }
       },
       {
-        selector: 'edge[type="api"]',
-        style: { 'line-style': 'solid' }
+        selector: 'node.search-dim', style: { opacity: 0.12 }
+      },
+      {
+        selector: 'edge.search-dim', style: { opacity: 0.06 }
+      },
+      {
+        selector: 'node.search-match',
+        style: { 'border-color': '#f59e0b', 'border-width': 4, 'border-style': 'solid' }
       }
     ],
-    layout: { name: 'cose', idealEdgeLength: 100, nodeOverlap: 20, refresh: 20, fit: true, padding: 30, randomize: false, componentSpacing: 100, nodeRepulsion: 400000, edgeElasticity: 100, nestingFactor: 5, gravity: 80, numIter: 1000, initialTemp: 200, coolingFactor: 0.95, minTemp: 1.0 }
+    layout: {
+      name: 'cose',
+      idealEdgeLength: 110,
+      nodeOverlap: 20,
+      refresh: 20,
+      fit: true,
+      padding: 40,
+      randomize: false,
+      componentSpacing: 120,
+      nodeRepulsion: 500000,
+      edgeElasticity: 100,
+      nestingFactor: 5,
+      gravity: 80,
+      numIter: 1200,
+      initialTemp: 200,
+      coolingFactor: 0.95,
+      minTemp: 1.0
+    }
   });
 
-  applySearchStyles();
+  applyViewFilter();
 
-  // Re-apply search if user typed before graph loaded
   const existingSearch = document.getElementById('node-search').value;
   if (existingSearch) searchNodes(existingSearch);
 
-  // Click node → show detail panel
-  cy.on('tap', 'node', function(e) {
-    const d = e.target.data();
-    showNodePanel(d);
-  });
+  cy.on('tap', 'node', function(e) { showNodePanel(e.target.data()); });
   cy.on('tap', function(e) {
     if (e.target === cy) document.getElementById('node-panel').style.display = 'none';
   });
@@ -216,12 +341,18 @@ function renderCytoscape(nodes, edges) {
 
 function showNodePanel(d) {
   const panel = document.getElementById('node-panel');
+  document.getElementById('node-panel-icon').textContent = ICON_MAP[d.type] || '📦';
   document.getElementById('node-panel-title').textContent = d.label || d.id;
+
+  const skip = ['id','label','parent','url','logical'];
   const rows = Object.entries(d)
-    .filter(([k]) => !['id','label','parent'].includes(k))
-    .map(([k,v]) => `<div class="d-flex gap-2 mb-1"><span class="text-muted" style="min-width:70px">${k}</span><span>${String(v||'—')}</span></div>`);
-  let html = rows.join('');
-  if (d.url) html += `<a href="${d.url}" class="btn btn-sm btn-primary mt-2">View detail</a>`;
+    .filter(([k,v]) => !skip.includes(k) && v !== undefined && v !== null && v !== '')
+    .map(([k,v]) => `<div class="d-flex gap-2 mb-1"><span class="text-muted" style="min-width:80px;flex-shrink:0">${esc(k)}</span><span class="text-break">${esc(String(v))}</span></div>`);
+
+  let html = '<div class="mb-2">' + rows.join('') + '</div>';
+  if (d.url) html += `<a href="${esc(d.url)}" class="btn btn-sm btn-primary w-100">
+    <i class="bi bi-arrow-right-circle me-1"></i>View Details
+  </a>`;
   document.getElementById('node-panel-body').innerHTML = html;
   panel.style.display = '';
 }
@@ -231,7 +362,6 @@ function showFallback(msg) {
   document.getElementById('topology-fallback').style.display = '';
   document.getElementById('topo-error-detail').textContent = msg;
 
-  // Build a flat resource list as fallback
   fetch('/api/topology').then(r => r.json()).then(data => {
     if (!data.nodes?.length) return;
     const grouped = {};
@@ -242,12 +372,12 @@ function showFallback(msg) {
     });
     const listHtml = Object.entries(grouped).map(([type, items]) =>
       `<div class="mb-3">
-        <h6 class="text-muted text-uppercase" style="font-size:.72rem;letter-spacing:.05em">${type} (${items.length})</h6>
+        <h6 class="text-muted text-uppercase" style="font-size:.72rem;letter-spacing:.05em">${esc(type)} (${items.length})</h6>
         <div class="list-group list-group-flush border rounded">
           ${items.map(item =>
             `<div class="list-group-item list-group-item-action py-1 px-2" style="font-size:.83rem">
-              ${item.label || item.id}
-              ${item.url ? `<a href="${item.url}" class="float-end text-link small">Detail</a>` : ''}
+              ${esc(item.label || item.id)}
+              ${item.url ? `<a href="${esc(item.url)}" class="float-end text-link small">Detail →</a>` : ''}
             </div>`
           ).join('')}
         </div>
@@ -269,37 +399,58 @@ function searchNodes(q) {
   }
   cy.nodes().forEach(node => {
     const label = (node.data('label') || '').toLowerCase();
-    const id    = (node.data('id') || '').toLowerCase();
+    const id    = (node.data('id')    || '').toLowerCase();
     const match = label.includes(q) || id.includes(q);
     node.removeClass('search-dim search-match');
     node.addClass(match ? 'search-match' : 'search-dim');
   });
   cy.edges().addClass('search-dim');
-
-  // Pan/zoom to first match
   const matched = cy.nodes('.search-match');
   if (matched.length) cy.fit(matched, 80);
 }
 
-// Add search-dim / search-match styles dynamically
-function applySearchStyles() {
+function exportPNG() {
   if (!cy) return;
-  cy.style()
-    .selector('node.search-dim').style({ opacity: 0.15 })
-    .selector('edge.search-dim').style({ opacity: 0.08 })
-    .selector('node.search-match').style({ 'border-color': '#f59e0b', 'border-width': 4 })
-    .update();
+  const png = cy.png({ scale: 2, bg: '#fff', full: true });
+  const a = document.createElement('a');
+  a.href = png;
+  a.download = 'wts-topology.png';
+  a.click();
+}
+
+function exportSVG() {
+  if (!cy) return;
+  const svg = cy.svg({ scale: 1, bg: '#fff', full: true });
+  const blob = new Blob([svg], { type: 'image/svg+xml' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'wts-topology.svg';
+  a.click();
+}
+
+function exportJSON() {
+  if (!_allNodes.length) return;
+  const data = { nodes: _allNodes, edges: _allEdges, exported_at: new Date().toISOString() };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'wts-topology.json';
+  a.click();
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 document.getElementById('layout-picker').addEventListener('change', function() {
-  if (cy) cy.layout({ name: this.value, fit: true, padding: 30 }).run();
+  if (cy) cy.layout({ name: this.value, fit: true, padding: 40 }).run();
 });
 
-// Clear search on Escape key
 document.getElementById('node-search').addEventListener('keydown', function(e) {
   if (e.key === 'Escape') { this.value = ''; searchNodes(''); }
 });
 
+populateRgFilter();
 loadTopology();
 </script>
 {% endblock %}

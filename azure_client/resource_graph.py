@@ -80,3 +80,32 @@ def fetch_public_ips() -> list[dict]:
         allocationMethod = properties.publicIPAllocationMethod
     """
     return _query(kql)
+
+
+def fetch_generic_resources() -> list[dict]:
+    """Fetch Storage Accounts, Key Vaults, VPN Gateways, Bastions, Log Analytics, and Container Registries."""
+    kql = """
+    Resources
+    | where type in (
+        'microsoft.storage/storageaccounts',
+        'microsoft.keyvault/vaults',
+        'microsoft.network/virtualnetworkgateways',
+        'microsoft.network/bastionhosts',
+        'microsoft.operationalinsights/workspaces',
+        'microsoft.containerregistry/registries',
+        'microsoft.web/sites',
+        'microsoft.containerservice/managedclusters'
+      )
+    | project
+        resource_id   = id,
+        name,
+        type,
+        resource_group = resourceGroup,
+        subscription_id = subscriptionId,
+        location,
+        tags          = tostring(tags),
+        kind,
+        sku           = tostring(sku)
+    | order by type asc, name asc
+    """
+    return _query(kql)

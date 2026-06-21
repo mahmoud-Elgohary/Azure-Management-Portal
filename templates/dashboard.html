@@ -9,95 +9,124 @@
 {% block content %}
 
 {% set s = stats or {} %}
+{% set sec = security_score or {} %}
+{% set sec_score = sec.score | default(0) | int %}
 
-<!-- ── Row 1: Resource inventory KPIs ────────────────────────────────── -->
+<!-- ── Row 1: Primary Operational KPIs ──────────────────────────────── -->
 <div class="row g-3 mb-3">
 
-  <div class="col-6 col-lg-3">
+  <div class="col-6 col-xl-3">
     <a href="{{ url_for('vms') }}" class="text-decoration-none">
       <div class="card kpi-card kpi-link">
         <div class="kpi-icon"><i class="bi bi-server"></i></div>
         <div class="kpi-value text-primary">{{ s.vm_total or 0 }}</div>
         <div class="kpi-label">Virtual Machines</div>
         <div class="kpi-sub">
-          <span class="badge bg-success me-1">{{ s.vm_running or 0 }} running</span>
+          <span class="badge bg-success bg-opacity-15 text-success border border-success border-opacity-25 me-1">{{ s.vm_running or 0 }} running</span>
           {% if (s.vm_total or 0) - (s.vm_running or 0) > 0 %}
-          <span class="badge bg-secondary">{{ (s.vm_total or 0) - (s.vm_running or 0) }} stopped</span>
+          <span class="badge bg-secondary bg-opacity-15 text-secondary border border-secondary border-opacity-25">{{ (s.vm_total or 0) - (s.vm_running or 0) }} stopped</span>
           {% endif %}
         </div>
       </div>
     </a>
   </div>
 
-  <div class="col-6 col-lg-3">
+  <div class="col-6 col-xl-3">
     <a href="{{ url_for('cost_view') }}" class="text-decoration-none">
       <div class="card kpi-card kpi-link">
         <div class="kpi-icon"><i class="bi bi-currency-euro"></i></div>
         <div class="kpi-value text-success">€{{ "%.0f"|format(mtd_cost or 0) }}</div>
         <div class="kpi-label">Month-to-Date Cost</div>
-        <div class="kpi-sub">Current calendar month</div>
+        <div class="kpi-sub">
+          {% if mtd_cost and budget %}
+            {% set pct = ((mtd_cost / budget) * 100) | int %}
+            <span class="badge {% if pct > 90 %}bg-danger{% elif pct > 70 %}bg-warning text-dark{% else %}bg-success{% endif %} bg-opacity-15 border border-opacity-25">{{ pct }}% of €{{ "%.0f"|format(budget) }} budget</span>
+          {% else %}
+            Current calendar month
+          {% endif %}
+        </div>
       </div>
     </a>
   </div>
 
-  <div class="col-6 col-lg-3">
+  <div class="col-6 col-xl-3">
     <a href="{{ url_for('security_view') }}" class="text-decoration-none">
       <div class="card kpi-card kpi-link">
         <div class="kpi-icon"><i class="bi bi-shield-exclamation"></i></div>
-        <div class="kpi-value {% if s.open_ports %}text-danger{% else %}text-success{% endif %}">
-          {{ s.open_ports or 0 }}
+        <div class="kpi-value" style="color:{{ sec.color or '#6b7280' }}">
+          {{ sec_score }}
+          <small style="font-size:.85rem;font-weight:600">/100</small>
         </div>
-        <div class="kpi-label">Open Inbound Rules</div>
-        <div class="kpi-sub">NSG rules allowing Any/Internet</div>
+        <div class="kpi-label">Security Score</div>
+        <div class="kpi-sub">
+          <span class="badge" style="background:{{ (sec.color or '#6b7280') }}20;color:{{ sec.color or '#6b7280' }};border:1px solid {{ (sec.color or '#6b7280') }}40">
+            Grade {{ sec.grade or '?' }}
+          </span>
+          {% if s.open_ports %}<span class="ms-1 text-danger small">{{ s.open_ports }} open ports</span>{% endif %}
+        </div>
       </div>
     </a>
   </div>
 
-  <div class="col-6 col-lg-3">
+  <div class="col-6 col-xl-3">
     <a href="{{ url_for('advisor_view') }}" class="text-decoration-none">
       <div class="card kpi-card kpi-link">
         <div class="kpi-icon"><i class="bi bi-lightbulb"></i></div>
         <div class="kpi-value {% if s.advisor_high %}text-warning{% else %}text-success{% endif %}">
           {{ s.advisor_high or 0 }}
         </div>
-        <div class="kpi-label">High Impact Recommendations</div>
-        <div class="kpi-sub"><a href="{{ url_for('advisor_view') }}" class="text-link">View all Advisor</a></div>
+        <div class="kpi-label">High-Impact Advisor Recs</div>
+        <div class="kpi-sub"><a href="{{ url_for('advisor_view') }}" class="text-link">View all recommendations</a></div>
       </div>
     </a>
   </div>
 
 </div>
 
-<!-- ── Row 2: Operational status KPIs ────────────────────────────────── -->
+<!-- ── Row 2: Security + Ops status ─────────────────────────────────── -->
 <div class="row g-3 mb-3">
 
-  <div class="col-6 col-lg-3">
+  <div class="col-6 col-xl-3">
     <a href="{{ url_for('waf_view') }}" class="text-decoration-none">
       <div class="card kpi-card kpi-link">
         <div class="kpi-icon"><i class="bi bi-fire"></i></div>
-        <div class="kpi-value {% if s.waf_enabled %}text-success{% else %}text-muted{% endif %}">
+        <div class="kpi-value {% if s.waf_enabled and s.waf_enabled == s.waf_gateways %}text-success{% elif s.waf_enabled %}text-warning{% else %}text-muted{% endif %}">
           {{ s.waf_enabled or 0 }}/{{ s.waf_gateways or 0 }}
         </div>
-        <div class="kpi-label">WAF Active Gateways</div>
-        <div class="kpi-sub">App Gateway + WAF</div>
+        <div class="kpi-label">WAF Protected Gateways</div>
+        <div class="kpi-sub">
+          {% if s.waf_gateways and s.waf_enabled < s.waf_gateways %}
+          <span class="badge bg-warning bg-opacity-15 text-warning border border-warning border-opacity-25">{{ s.waf_gateways - s.waf_enabled }} unprotected</span>
+          {% elif s.waf_enabled %}
+          <span class="badge bg-success bg-opacity-15 text-success border border-success border-opacity-25">All protected</span>
+          {% else %}
+          App Gateway + WAF
+          {% endif %}
+        </div>
       </div>
     </a>
   </div>
 
-  <div class="col-6 col-lg-3">
-    <a href="{{ url_for('alerts_view') }}" class="text-decoration-none">
+  <div class="col-6 col-xl-3">
+    <a href="{{ url_for('health_view') }}" class="text-decoration-none">
       <div class="card kpi-card kpi-link">
-        <div class="kpi-icon"><i class="bi bi-bell"></i></div>
+        <div class="kpi-icon"><i class="bi bi-heart-pulse"></i></div>
         <div class="kpi-value {% if s.unavailable %}text-danger{% else %}text-success{% endif %}">
           {{ s.unavailable or 0 }}
         </div>
         <div class="kpi-label">Unavailable Resources</div>
-        <div class="kpi-sub"><a href="{{ url_for('health_view') }}" class="text-link">View health</a></div>
+        <div class="kpi-sub">
+          {% if s.unavailable %}
+          <span class="badge bg-danger bg-opacity-15 text-danger border border-danger border-opacity-25">Needs attention</span>
+          {% else %}
+          <span class="badge bg-success bg-opacity-15 text-success border border-success border-opacity-25">All healthy</span>
+          {% endif %}
+        </div>
       </div>
     </a>
   </div>
 
-  <div class="col-6 col-lg-3">
+  <div class="col-6 col-xl-3">
     <a href="{{ url_for('backup_view') }}" class="text-decoration-none">
       <div class="card kpi-card kpi-link">
         <div class="kpi-icon"><i class="bi bi-shield-check"></i></div>
@@ -105,12 +134,18 @@
           {{ s.backup_ok or 0 }}/{{ s.backup_total or 0 }}
         </div>
         <div class="kpi-label">Backup Status</div>
-        <div class="kpi-sub">Completed / Total protected VMs</div>
+        <div class="kpi-sub">
+          {% if (s.backup_total or 0) > (s.backup_ok or 0) %}
+          <span class="badge bg-danger bg-opacity-15 text-danger border border-danger border-opacity-25">{{ (s.backup_total or 0) - (s.backup_ok or 0) }} failed/stale</span>
+          {% else %}
+          <span class="badge bg-success bg-opacity-15 text-success border border-success border-opacity-25">All completed</span>
+          {% endif %}
+        </div>
       </div>
     </a>
   </div>
 
-  <div class="col-6 col-lg-3">
+  <div class="col-6 col-xl-3">
     <a href="{{ url_for('activity_view') }}" class="text-decoration-none">
       <div class="card kpi-card kpi-link">
         <div class="kpi-icon"><i class="bi bi-activity"></i></div>
@@ -118,7 +153,13 @@
           {{ s.failed_activity_24h or 0 }}
         </div>
         <div class="kpi-label">Failed Operations (24h)</div>
-        <div class="kpi-sub">Azure Activity Log failures</div>
+        <div class="kpi-sub">
+          {% if s.failed_activity_24h %}
+          <span class="badge bg-danger bg-opacity-15 text-danger border border-danger border-opacity-25">Activity Log failures</span>
+          {% else %}
+          <span class="badge bg-success bg-opacity-15 text-success border border-success border-opacity-25">No failures detected</span>
+          {% endif %}
+        </div>
       </div>
     </a>
   </div>

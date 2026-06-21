@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Resources — WTS Azure Manager{% endblock %}
+{% block page_title %}Resources{% endblock %}
+
+{% block content %}
+
+<!-- Type filter pills -->
+<div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+  <span class="small text-muted fw-500">Type:</span>
+  <a href="{{ url_for('resources_view') }}"
+     class="btn btn-sm {% if not selected_type %}btn-secondary{% else %}btn-outline-secondary{% endif %}">
+    All <span class="badge bg-secondary ms-1">{{ items | length if not selected_type else '' }}</span>
+  </a>
+  {% for rtype, cnt in type_counts.items() | sort(attribute='1', reverse=True) %}
+  {% set type_short = rtype.split('/')[-1].replace('accounts','').replace('vaults','KV').strip() %}
+  <a href="{{ url_for('resources_view', type=rtype) }}"
+     class="btn btn-sm {% if selected_type == rtype %}btn-primary{% else %}btn-outline-primary{% endif %}">
+    {{ type_short }} <span class="badge bg-secondary ms-1">{{ cnt }}</span>
+  </a>
+  {% endfor %}
+</div>
+
+<!-- Filters -->
+<form class="d-flex flex-wrap gap-2 align-items-center mb-3" method="get">
+  {% if selected_type %}<input type="hidden" name="type" value="{{ selected_type }}" />{% endif %}
+  <select name="rg" class="form-select form-select-sm w-auto" onchange="this.form.submit()">
+    <option value="">All resource groups</option>
+    {% for rg_name in resource_groups %}
+    <option value="{{ rg_name }}" {% if selected_rg == rg_name %}selected{% endif %}>{{ rg_name }}</option>
+    {% endfor %}
+  </select>
+  <input type="text" name="q" class="form-control form-control-sm" style="width:220px"
+         placeholder="Search by name, RG, tag…" value="{{ selected_q or '' }}" />
+  <button type="submit" class="btn btn-sm btn-outline-secondary">Search</button>
+  {% if selected_rg or selected_q %}
+  <a href="{{ url_for('resources_view', type=selected_type) }}" class="btn btn-sm btn-outline-secondary">Clear</a>
+  {% endif %}
+  <span class="ms-auto text-muted small">{{ items | length }} resources</span>
+</form>
+
+{% if not items %}
+<div class="card">
+  <div class="card-body text-center text-muted py-5">
+    <i class="bi bi-collection fs-1 d-block mb-3"></i>
+    <h6>No resources found</h6>
+    <p class="small mb-0">
+      {% if selected_q or selected_rg or selected_type %}
+        No resources match the current filters.
+        <a href="{{ url_for('resources_view') }}">Clear filters</a>
+      {% else %}
+        Run a sync to populate this view. Storage Accounts, Key Vaults, VPN Gateways, Bastions, and
+        Log Analytics Workspaces are discovered via Azure Resource Graph.
+      {% endif %}
+    </p>
+  </div>
+</div>
+{% else %}
+
+{% set _ICONS = {
+  'storageaccounts': 'bi-archive',
+  'vaults': 'bi-key',
+  'virtualnetworkgateways': 'bi-signpost-split',
+  'bastionhosts': 'bi-shield-lock',
+  'workspaces': 'bi-graph-up-arrow',
+  'registries': 'bi-box-seam',
+  'sites': 'bi-globe2',
+  'managedclusters': 'bi-diagram-3',
+} %}
+
+<div class="card">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-dark">
+          <tr>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Resource Group</th>
+            <th>Location</th>
+            <th>Kind / SKU</th>
+            <th>Tags</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in items %}
+          {% set type_last = (r.type or '').split('/')[-1].lower() %}
+          {% set icon = _ICONS.get(type_last, 'bi-box') %}
+          <tr>
+            <td>
+              <a href="{{ url_for('resource_detail', resource_group=r.resource_group, resource_id_path=r.name) }}"
+                 class="text-decoration-none fw-500">
+                <i class="bi {{ icon }} me-1 text-primary"></i>{{ r.name }}
+              </a>
+            </td>
+            <td>
+              <span class="badge bg-secondary">
+                {{ (r.type or '').split('/')[-1] }}
+              </span>
+            </td>
+            <td><small>{{ r.resource_group or '—' }}</small></td>
+            <td><small>{{ r.location or '—' }}</small></td>
+            <td>
+              <small class="text-muted">
+                {% if r.kind %}{{ r.kind[:30] }}{% elif r.sku %}{{ r.sku[:30] }}{% else %}—{% endif %}
+              </small>
+            </td>
+            <td>
+              <small class="text-muted">
+                {% if r.tags and r.tags not in ('{}','None','','null') %}
+                <i class="bi bi-tags text-primary"></i>
+                {% else %}—{% endif %}
+              </small>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

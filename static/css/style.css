@@ -187,10 +187,16 @@ html, body {
 .status-dot.gray   { background: #9ca3af; }
 
 /* ── KPI cards ─────────────────────────────────────────────────────────── */
-.kpi-card { padding: .85rem 1.1rem; }
+.kpi-card { padding: .85rem 1.1rem; position: relative; overflow: hidden; }
 .kpi-value { font-size: 1.7rem; font-weight: 700; line-height: 1.2; }
 .kpi-label { font-size: .75rem; color: #6b7280; margin-top: .15rem; }
 .kpi-sub   { font-size: .78rem; color: #9ca3af; margin-top: .1rem; }
+.kpi-icon  {
+  position: absolute; top: .7rem; right: .85rem;
+  font-size: 1.6rem; color: rgba(0,0,0,.06);
+  pointer-events: none;
+}
+.fw-500 { font-weight: 500; }
 
 /* ── Resource detail tabs ──────────────────────────────────────────────── */
 .detail-tabs { border-bottom: 2px solid #e5e7eb; margin-bottom: 1rem; }

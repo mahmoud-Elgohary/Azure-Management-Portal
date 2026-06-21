@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% block title %}{{ resource.name }} — {{ resource.type.split('/')[-1].title() if resource.type else 'Resource' }} — WTS Azure Manager{% endblock %}
+{% block page_title %}{{ resource.name }}{% endblock %}
+
+{% block content %}
+
+{% set type_short = resource.type.split('/')[-1].replace('-', ' ') if resource.type else 'Resource' %}
+{% set type_provider = resource.type.split('/')[0] if resource.type else '' %}
+
+<div class="d-flex align-items-center gap-2 mb-4">
+  <a href="{{ url_for('resources_view') }}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left"></i> Resources
+  </a>
+  <span class="text-muted">/</span>
+  <span class="badge bg-secondary">{{ type_short }}</span>
+  <strong>{{ resource.name }}</strong>
+</div>
+
+<!-- KPI row -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <i class="bi bi-geo-alt kpi-icon"></i>
+      <div class="kpi-value text-primary" style="font-size:1.1rem">{{ resource.location or '—' }}</div>
+      <div class="kpi-label">Region</div>
+      <div class="kpi-sub">Azure location</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <i class="bi bi-collection kpi-icon"></i>
+      <div class="kpi-value text-muted" style="font-size:1rem">{{ resource.resource_group or '—' }}</div>
+      <div class="kpi-label">Resource Group</div>
+      <div class="kpi-sub">Container</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <i class="bi bi-layers kpi-icon"></i>
+      <div class="kpi-value text-muted" style="font-size:1rem">{{ resource.kind or (resource.sku[:20] if resource.sku else '—') }}</div>
+      <div class="kpi-label">Kind / SKU</div>
+      <div class="kpi-sub">Resource tier</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <i class="bi bi-lightbulb kpi-icon"></i>
+      <div class="kpi-value {% if advisor_recs %}text-warning{% else %}text-success{% endif %}">
+        {{ advisor_recs | length }}
+      </div>
+      <div class="kpi-label">Advisor Recs</div>
+      <div class="kpi-sub">Recommendations</div>
+    </div>
+  </div>
+</div>
+
+<!-- Resource details -->
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header"><i class="bi bi-info-circle me-1"></i> Resource Details</div>
+      <div class="card-body">
+        <table class="table table-sm table-borderless mb-0">
+          <tbody>
+            <tr><td class="text-muted w-40">Name</td><td><strong>{{ resource.name }}</strong></td></tr>
+            <tr><td class="text-muted">Type</td><td><code>{{ resource.type or '—' }}</code></td></tr>
+            <tr><td class="text-muted">Resource Group</td><td>{{ resource.resource_group }}</td></tr>
+            <tr><td class="text-muted">Location</td><td>{{ resource.location or '—' }}</td></tr>
+            {% if resource.kind %}
+            <tr><td class="text-muted">Kind</td><td>{{ resource.kind }}</td></tr>
+            {% endif %}
+            {% if resource.sku %}
+            <tr><td class="text-muted">SKU</td><td><small class="font-monospace">{{ resource.sku[:200] }}</small></td></tr>
+            {% endif %}
+            <tr><td class="text-muted">Subscription</td><td><small class="font-monospace text-muted">{{ resource.subscription_id or '—' }}</small></td></tr>
+            <tr><td class="text-muted">Resource ID</td><td><small class="font-monospace text-muted text-truncate d-block" style="max-width:300px" title="{{ resource.resource_id }}">{{ resource.resource_id or '—' }}</small></td></tr>
+            <tr><td class="text-muted">Last Synced</td><td><small class="text-muted">{{ (resource.synced_at or '')[:19] }}</small></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <!-- Tags -->
+    <div class="card mb-3">
+      <div class="card-header"><i class="bi bi-tags me-1"></i> Tags</div>
+      <div class="card-body">
+        {% if resource.tags and resource.tags not in ('{}', 'None', '', 'null') %}
+        <pre class="mb-0 small" style="white-space:pre-wrap;max-height:150px;overflow-y:auto">{{ resource.tags }}</pre>
+        {% else %}
+        <span class="text-muted small">No tags</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Health -->
+    {% if health_item %}
+    <div class="card">
+      <div class="card-header"><i class="bi bi-heart-pulse me-1"></i> Health</div>
+      <div class="card-body">
+        <span class="badge {% if health_item.availability_state == 'Available' %}bg-success{% elif health_item.availability_state == 'Unavailable' %}bg-danger{% else %}bg-warning text-dark{% endif %}">
+          {{ health_item.availability_state }}
+        </span>
+        <p class="small mt-2 mb-0">{{ health_item.summary or '' }}</p>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Advisor recommendations -->
+{% if advisor_recs %}
+<div class="card mt-3">
+  <div class="card-header"><i class="bi bi-lightbulb me-1"></i> Advisor Recommendations</div>
+  <div class="card-body p-0">
+    <table class="table table-sm mb-0">
+      <thead class="table-light"><tr><th>Impact</th><th>Category</th><th>Recommendation</th></tr></thead>
+      <tbody>
+        {% for rec in advisor_recs %}
+        <tr>
+          <td><span class="badge {% if rec.impact == 'High' %}bg-danger{% elif rec.impact == 'Medium' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ rec.impact }}</span></td>
+          <td><span class="badge bg-secondary">{{ rec.category }}</span></td>
+          <td><small>{{ rec.short_description or '—' }}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- KQL investigation -->
+<div class="card mt-3">
+  <div class="card-header"><i class="bi bi-terminal me-1"></i> KQL Investigations</div>
+  <div class="card-body">
+    <div class="row g-2">
+      {% set rname = resource.name.upper() %}
+      {% set rtype = resource.type or '' %}
+      {% set rg = resource.resource_group %}
+      {% set kql_list = [
+        ('Activity Events 7d', "AzureActivity\n| where ResourceGroup == '" ~ rg ~ "'\n| where Properties contains '" ~ resource.name ~ "'\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, OperationNameValue, ActivityStatusValue\n| order by TimeGenerated desc"),
+        ('Failed Operations', "AzureActivity\n| where ResourceGroup == '" ~ rg ~ "'\n| where Properties contains '" ~ resource.name ~ "'\n| where ActivityStatusValue == 'Failed'\n| where TimeGenerated >= ago(30d)\n| project TimeGenerated, Caller, OperationNameValue\n| order by TimeGenerated desc"),
+      ] %}
+      {% if 'keyvault' in rtype.lower() %}
+      {% set kql_list = kql_list + [
+        ('Key Vault Access Logs', "AzureDiagnostics\n| where ResourceType == 'VAULTS'\n| where Resource == '" ~ rname ~ "'\n| where TimeGenerated >= ago(1d)\n| project TimeGenerated, CallerIPAddress, identity_claim_upn_s, OperationName, resultType_s\n| order by TimeGenerated desc"),
+        ('Key Vault Failed Ops', "AzureDiagnostics\n| where ResourceType == 'VAULTS'\n| where Resource == '" ~ rname ~ "'\n| where resultType_s != 'Success'\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, CallerIPAddress, OperationName, resultType_s, httpStatusCode_d\n| order by TimeGenerated desc"),
+      ] %}
+      {% elif 'storage' in rtype.lower() %}
+      {% set kql_list = kql_list + [
+        ('Storage Read/Write Ops', "StorageBlobLogs\n| where AccountName == '" ~ resource.name ~ "'\n| where TimeGenerated >= ago(1d)\n| summarize count() by OperationName, StatusText\n| order by count_ desc"),
+        ('Storage Auth Failures', "StorageBlobLogs\n| where AccountName == '" ~ resource.name ~ "'\n| where StatusCode >= 400\n| where TimeGenerated >= ago(1d)\n| project TimeGenerated, CallerIpAddress, OperationName, StatusCode\n| order by TimeGenerated desc"),
+      ] %}
+      {% elif 'virtualnetworkgateways' in rtype.lower() %}
+      {% set kql_list = kql_list + [
+        ('VPN Tunnel Status', "AzureDiagnostics\n| where ResourceType == 'VIRTUALNETWORKGATEWAYS'\n| where Resource == '" ~ rname ~ "'\n| where TimeGenerated >= ago(1d)\n| where Category == 'GatewayDiagnosticLog'\n| project TimeGenerated, message_s\n| order by TimeGenerated desc"),
+      ] %}
+      {% endif %}
+      {% for label, query in kql_list %}
+      <div class="col-md-6">
+        <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                onclick="openKql({{ query | tojson }})">
+          <i class="bi bi-terminal me-1"></i>{{ label }}
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function openKql(query) {
+  sessionStorage.setItem('kql_prefill', query);
+  location.href = '{{ url_for("kql_console") }}';
+}
+</script>
+{% endblock %}

@@ -112,6 +112,11 @@
       <i class="bi bi-clock-history"></i> Change Tracking
     </a>
 
+    <a href="{{ url_for('resources_view') }}"
+       class="{% if request.endpoint in ('resources_view','resource_detail') %}active{% endif %}">
+      <i class="bi bi-collection"></i> Resources
+    </a>
+
     <div class="nav-section-label">Network</div>
 
     <a href="{{ url_for('topology_view') }}"

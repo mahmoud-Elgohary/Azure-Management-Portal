@@ -26,6 +26,7 @@ from azure_client import (
     postgresql as pg_client,
     appgateway as appgw_client,
     activity as activity_client,
+    resource_graph,
 )
 
 log = logging.getLogger("wts.sync")
@@ -361,6 +362,21 @@ def _upsert_activity_log(conn, rows: list[dict], ts: str):
     )
 
 
+def _upsert_generic_resources(conn, rows: list[dict], ts: str):
+    for r in rows:
+        if "_error" in r or not r.get("resource_id"):
+            continue
+        conn.execute(
+            """INSERT INTO resources (resource_id,name,type,resource_group,subscription_id,location,tags,kind,sku,synced_at)
+               VALUES (:resource_id,:name,:type,:resource_group,:subscription_id,:location,:tags,:kind,:sku,:synced_at)
+               ON CONFLICT(resource_id) DO UPDATE SET
+                 name=excluded.name, type=excluded.type, resource_group=excluded.resource_group,
+                 location=excluded.location, tags=excluded.tags, kind=excluded.kind,
+                 sku=excluded.sku, synced_at=excluded.synced_at""",
+            {**r, "synced_at": ts},
+        )
+
+
 def run_sync():
     init_db()
     ts = _now()
@@ -523,6 +539,17 @@ def run_sync():
         err = f"ActivityLog: {exc}"
         log.error(err)
         errors.append(err)
+
+    # Generic resources via Resource Graph (Storage, Key Vault, VPN, Bastion, etc.)
+    log.info("Fetching generic resources via Resource Graph …")
+    try:
+        generic_rows = resource_graph.fetch_generic_resources()
+        _upsert_generic_resources(conn, generic_rows, ts)
+        log.info("  → %d generic resources (Storage/KV/VPN/Bastion/etc.) cached", len(generic_rows))
+    except Exception as exc:
+        err = f"GenericResources: {exc}"
+        log.warning(err)
+        # non-fatal — don't append to errors
 
     # Resource change snapshot (always runs regardless of errors)
     try:

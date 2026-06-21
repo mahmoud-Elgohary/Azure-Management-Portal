@@ -4,45 +4,77 @@
 
 {% block content %}
 
+{% set prevention = gateways | selectattr('waf_mode', 'equalto', 'Prevention') | list | length %}
+{% set detection = gateways | selectattr('waf_mode', 'equalto', 'Detection') | list | length %}
+{% set waf_on_count = summary.get('waf_enabled', 0) %}
+{% set total_gw = summary.get('total_gateways', 0) %}
+
 <!-- KPI row -->
-<div class="row g-3 mb-4">
+<div class="row g-3 mb-3">
   <div class="col-6 col-lg-3">
     <div class="card kpi-card">
+      <div class="kpi-icon"><i class="bi bi-router"></i></div>
       <div class="kpi-value text-primary">{{ gateways | length }}</div>
       <div class="kpi-label">Application Gateways</div>
       <div class="kpi-sub">Total in subscription</div>
     </div>
   </div>
   <div class="col-6 col-lg-3">
-    <div class="card kpi-card">
-      <div class="kpi-value {% if summary.waf_enabled %}text-success{% else %}text-danger{% endif %}">
-        {{ summary.get('waf_enabled', 0) }}
+    <a href="#gw-table" class="text-decoration-none">
+      <div class="card kpi-card kpi-link">
+        <div class="kpi-icon"><i class="bi bi-shield-check"></i></div>
+        <div class="kpi-value {% if waf_on_count == total_gw and total_gw > 0 %}text-success{% elif waf_on_count > 0 %}text-warning{% else %}text-danger{% endif %}">
+          {{ waf_on_count }}/{{ total_gw }}
+        </div>
+        <div class="kpi-label">WAF Enabled</div>
+        <div class="kpi-sub">
+          {% if waf_on_count == total_gw and total_gw > 0 %}
+            <span class="badge bg-success">All protected</span>
+          {% elif total_gw - waf_on_count > 0 %}
+            <span class="badge bg-danger">{{ total_gw - waf_on_count }} unprotected</span>
+          {% endif %}
+        </div>
       </div>
-      <div class="kpi-label">WAF Enabled</div>
-      <div class="kpi-sub">of {{ summary.get('total_gateways', 0) }} gateways</div>
-    </div>
+    </a>
   </div>
   <div class="col-6 col-lg-3">
     <div class="card kpi-card">
-      <div class="kpi-value text-muted">
-        {% set prevention = gateways | selectattr('waf_mode', 'equalto', 'Prevention') | list | length %}
-        {{ prevention }}
-      </div>
+      <div class="kpi-icon"><i class="bi bi-shield-fill-x"></i></div>
+      <div class="kpi-value {% if prevention > 0 %}text-danger{% else %}text-muted{% endif %}">{{ prevention }}</div>
       <div class="kpi-label">Prevention Mode</div>
-      <div class="kpi-sub">WAF in blocking mode</div>
+      <div class="kpi-sub">
+        <span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25">Blocking active threats</span>
+      </div>
     </div>
   </div>
   <div class="col-6 col-lg-3">
     <div class="card kpi-card">
-      <div class="kpi-value text-muted">
-        {% set detection = gateways | selectattr('waf_mode', 'equalto', 'Detection') | list | length %}
-        {{ detection }}
-      </div>
+      <div class="kpi-icon"><i class="bi bi-eye"></i></div>
+      <div class="kpi-value {% if detection > 0 %}text-warning{% else %}text-muted{% endif %}">{{ detection }}</div>
       <div class="kpi-label">Detection Mode</div>
-      <div class="kpi-sub">WAF in logging-only mode</div>
+      <div class="kpi-sub">
+        <span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25">Logging only — not blocking</span>
+      </div>
     </div>
   </div>
 </div>
+
+<!-- Security posture banner -->
+{% if gateways %}
+  {% set detection_only = gateways | selectattr('waf_mode', 'equalto', 'Detection') | list %}
+  {% set no_waf = gateways | rejectattr('waf_enabled') | list %}
+  {% if no_waf or detection_only %}
+  <div class="alert alert-warning d-flex align-items-start gap-2 mb-3" role="alert">
+    <i class="bi bi-exclamation-triangle-fill mt-1"></i>
+    <div>
+      <strong>WAF Posture Risk:</strong>
+      {% if no_waf %}<span class="me-2">{{ no_waf|length }} gateway(s) have WAF <em>disabled</em> — attacks pass through unfiltered.</span>{% endif %}
+      {% if detection_only %}<span>{{ detection_only|length }} gateway(s) in <em>Detection</em> mode — threats logged but not blocked.</span>{% endif %}
+      Switch to Prevention mode to actively block OWASP threats.
+    </div>
+  </div>
+  {% endif %}
+{% endif %}
 
 {% if not gateways %}
 <div class="card">
@@ -78,7 +110,10 @@
       <tbody>
         {% for gw in gateways %}
         <tr>
-          <td class="fw-500">{{ gw.name }}</td>
+          <td class="fw-500">
+            <a href="{{ url_for('appgateway_detail', resource_group=gw.resource_group, gw_name=gw.name) }}"
+               class="text-decoration-none">{{ gw.name }}</a>
+          </td>
           <td><small>{{ gw.resource_group }}</small></td>
           <td><code class="small">{{ gw.sku_name or '—' }}</code></td>
           <td>{{ gw.capacity or '—' }}</td>
@@ -162,9 +197,9 @@
       ] %}
       {% for name, query in waf_queries %}
       <div class="col-md-4">
-        <a href="{{ url_for('kql_console') }}?waf_query={{ name | urlencode }}"
+        <a href="{{ url_for('kql_console') }}"
            class="btn btn-sm btn-outline-secondary w-100 text-start"
-           onclick="sessionStorage.setItem('waf_kql_{{ loop.index }}', {{ query | tojson }}); location.href='{{ url_for('kql_console') }}'; return false;">
+           onclick="sessionStorage.setItem('kql_prefill', {{ query | tojson }}); location.href='{{ url_for('kql_console') }}'; return false;">
           <i class="bi bi-terminal me-1"></i>{{ name }}
         </a>
       </div>

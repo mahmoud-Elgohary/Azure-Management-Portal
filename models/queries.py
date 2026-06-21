@@ -542,7 +542,7 @@ def search_resources(q: str) -> list[dict]:
     results = []
 
     for row in conn.execute(
-        "SELECT name, resource_group, location, power_state FROM vms WHERE name LIKE ? OR resource_group LIKE ? ORDER BY name LIMIT 10",
+        "SELECT name, resource_group, location, power_state FROM vms WHERE name LIKE ? OR resource_group LIKE ? ORDER BY name LIMIT 8",
         (q_like, q_like),
     ).fetchall():
         results.append({
@@ -564,7 +564,51 @@ def search_resources(q: str) -> list[dict]:
         })
 
     for row in conn.execute(
-        "SELECT short_description, category, impact FROM advisor_recs WHERE short_description LIKE ? ORDER BY impact LIMIT 5",
+        "SELECT name, resource_group, state FROM postgresql_servers WHERE name LIKE ? OR resource_group LIKE ? ORDER BY name LIMIT 4",
+        (q_like, q_like),
+    ).fetchall():
+        results.append({
+            "name": row["name"],
+            "type": "PostgreSQL",
+            "sub": f"{row['resource_group']} · {row['state'] or '—'}",
+            "url": f"/postgresql/{row['resource_group']}/{row['name']}",
+        })
+
+    for row in conn.execute(
+        "SELECT name, resource_group, location FROM nsgs WHERE name LIKE ? OR resource_group LIKE ? ORDER BY name LIMIT 4",
+        (q_like, q_like),
+    ).fetchall():
+        results.append({
+            "name": row["name"],
+            "type": "NSG",
+            "sub": row["resource_group"],
+            "url": f"/nsgs/{row['resource_group']}/{row['name']}",
+        })
+
+    for row in conn.execute(
+        "SELECT name, resource_group, operational_state FROM app_gateways WHERE name LIKE ? OR resource_group LIKE ? ORDER BY name LIMIT 3",
+        (q_like, q_like),
+    ).fetchall():
+        results.append({
+            "name": row["name"],
+            "type": "App Gateway",
+            "sub": f"{row['resource_group']} · {row['operational_state'] or '—'}",
+            "url": f"/waf",
+        })
+
+    for row in conn.execute(
+        "SELECT name, resource_group, address_space FROM vnets WHERE name LIKE ? OR resource_group LIKE ? ORDER BY name LIMIT 3",
+        (q_like, q_like),
+    ).fetchall():
+        results.append({
+            "name": row["name"],
+            "type": "VNet",
+            "sub": f"{row['resource_group']} · {row['address_space'] or '—'}",
+            "url": f"/topology",
+        })
+
+    for row in conn.execute(
+        "SELECT short_description, category, impact FROM advisor_recs WHERE short_description LIKE ? ORDER BY impact LIMIT 4",
         (q_like,),
     ).fetchall():
         results.append({
@@ -574,8 +618,20 @@ def search_resources(q: str) -> list[dict]:
             "url": f"/advisor?category={row['category']}",
         })
 
+    for row in conn.execute(
+        "SELECT name, type, resource_group, location FROM resources WHERE name LIKE ? OR resource_group LIKE ? ORDER BY name LIMIT 8",
+        (q_like, q_like),
+    ).fetchall():
+        type_short = (row["type"] or "").split("/")[-1].replace("-", " ").title()
+        results.append({
+            "name": row["name"],
+            "type": type_short,
+            "sub": row["resource_group"],
+            "url": f"/resources/{row['resource_group']}/{row['name']}",
+        })
+
     conn.close()
-    return results[:20]
+    return results[:30]
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
@@ -805,13 +861,94 @@ def get_waf_summary() -> dict:
         conn.close()
 
 
+def get_appgateway_by_name(resource_group: str, name: str) -> dict | None:
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM app_gateways WHERE LOWER(resource_group)=LOWER(?) AND LOWER(name)=LOWER(?)",
+            (resource_group, name),
+        ).fetchone()
+        return dict(row) if row else None
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
+# ── Generic Resources (Storage, Key Vault, VPN, Bastion, etc.) ───────────────
+
+def get_generic_resources(
+    type_filter: str = None,
+    rg_filter: str = None,
+    search_q: str = None,
+    limit: int = 1000,
+) -> list[dict]:
+    conn = get_db()
+    sql = "SELECT * FROM resources WHERE 1=1"
+    params: list = []
+    if type_filter:
+        sql += " AND LOWER(type) LIKE LOWER(?)"
+        params.append(f"%{type_filter}%")
+    if rg_filter:
+        sql += " AND LOWER(resource_group) = LOWER(?)"
+        params.append(rg_filter)
+    if search_q:
+        like = f"%{search_q}%"
+        sql += " AND (name LIKE ? OR resource_group LIKE ? OR type LIKE ? OR tags LIKE ?)"
+        params.extend([like, like, like, like])
+    sql += " ORDER BY type, name LIMIT ?"
+    params.append(limit)
+    try:
+        return [dict(r) for r in conn.execute(sql, params).fetchall()]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def get_generic_resource_type_counts() -> dict:
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT type, COUNT(*) AS cnt FROM resources GROUP BY type ORDER BY cnt DESC"
+        ).fetchall()
+        return {r["type"]: r["cnt"] for r in rows}
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+
+
+def get_generic_resource_by_path(resource_group: str, path: str) -> dict | None:
+    """Look up a resource by resource_group + name extracted from URL path."""
+    name = path.split("/")[-1]
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM resources WHERE LOWER(resource_group)=LOWER(?) AND LOWER(name)=LOWER(?)",
+            (resource_group, name),
+        ).fetchone()
+        if row:
+            return dict(row)
+        row = conn.execute(
+            "SELECT * FROM resources WHERE LOWER(resource_id) LIKE LOWER(?)",
+            (f"%{path}%",),
+        ).fetchone()
+        return dict(row) if row else None
+    except Exception:
+        return None
+    finally:
+        conn.close()
+
+
 # ── Activity Log ──────────────────────────────────────────────────────────────
 
 def get_activity_log(
     resource_group: str = None,
     caller: str = None,
     status: str = None,
-    limit: int = 200,
+    op_prefix: str = None,
+    limit: int = 500,
 ) -> list[dict]:
     conn = get_db()
     sql = "SELECT * FROM activity_log WHERE 1=1"
@@ -825,6 +962,9 @@ def get_activity_log(
     if status:
         sql += " AND status = ?"
         params.append(status)
+    if op_prefix:
+        sql += " AND (resource_type LIKE ? OR operation_name LIKE ?)"
+        params.extend([f"{op_prefix}%", f"{op_prefix}%"])
     sql += " ORDER BY event_timestamp DESC LIMIT ?"
     params.append(limit)
     try:
@@ -857,6 +997,64 @@ def activity_summary() -> dict:
         }
     except Exception:
         return {"total": 0, "failed": 0, "recent_24h": 0, "top_callers": []}
+    finally:
+        conn.close()
+
+
+def get_activity_op_breakdown() -> list[dict]:
+    """Return operation category counts for the Activity Center chart."""
+    conn = get_db()
+    _CATEGORIES = [
+        ("VM Operations",      "Microsoft.Compute/virtualMachines"),
+        ("NSG Changes",        "Microsoft.Network/networkSecurityGroups"),
+        ("Role Assignments",   "Microsoft.Authorization/roleAssignments"),
+        ("Storage",            "Microsoft.Storage/storageAccounts"),
+        ("Key Vault",          "Microsoft.KeyVault/vaults"),
+        ("SQL / PostgreSQL",   "Microsoft.Sql"),
+        ("App Gateway / WAF",  "Microsoft.Network/applicationGateways"),
+        ("Policy",             "Microsoft.Authorization/policyAssignments"),
+        ("Network (other)",    "Microsoft.Network"),
+        ("Compute (other)",    "Microsoft.Compute"),
+    ]
+    try:
+        result = []
+        used_ids: set = set()
+        for label, prefix in _CATEGORIES:
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM activity_log WHERE resource_type LIKE ? OR operation_name LIKE ?",
+                (f"{prefix}%", f"{prefix}%"),
+            ).fetchone()
+            cnt = row["cnt"] if row else 0
+            if cnt > 0:
+                result.append({"category": label, "count": cnt})
+                used_ids.add(prefix)
+        result.sort(key=lambda x: x["count"], reverse=True)
+        return result
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def get_activity_daily_trend(days: int = 7) -> list[dict]:
+    """Return per-day event counts (total vs failed) for the last N days."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """
+            SELECT substr(event_timestamp, 1, 10) AS day,
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN status IN ('Failed','Failure') THEN 1 ELSE 0 END) AS failed
+            FROM activity_log
+            WHERE event_timestamp >= datetime('now', ?)
+            GROUP BY day
+            ORDER BY day
+            """,
+            (f"-{days} days",),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
     finally:
         conn.close()
 
@@ -1295,6 +1493,89 @@ def get_snapshot_diff() -> dict:
         return {"has_diff": True, "latest": latest_date, "previous": prev_date, "changes": changes}
     except Exception:
         return {"has_diff": False, "latest": None, "previous": None, "changes": []}
+    finally:
+        conn.close()
+
+
+# ── Security history / trend (from snapshots) ─────────────────────────────────
+
+def get_security_history(days: int = 14) -> list[dict]:
+    """Return daily security posture snapshots for trend chart."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT snapshot_date, resource_type, total_count FROM resource_snapshots "
+            "ORDER BY snapshot_date DESC"
+        ).fetchall()
+        by_date: dict = {}
+        for r in rows:
+            d = r["snapshot_date"]
+            if d not in by_date:
+                by_date[d] = {}
+            by_date[d][r["resource_type"]] = r["total_count"]
+
+        result = []
+        for date in sorted(by_date.keys())[-days:]:
+            data = by_date[date]
+            open_ports = data.get("NSG Rules", 0)
+            pub_ips    = data.get("Public IPs", 0)
+            score = max(0, 100 - open_ports * 3 - pub_ips * 2)
+            result.append({"date": date, "score": score, "open_ports": open_ports, "public_ips": pub_ips})
+        return result
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def get_public_ip_exposure() -> list[dict]:
+    """Public IPs with associated NIC and VM details."""
+    conn = get_db()
+    try:
+        rows = conn.execute("""
+            SELECT p.name, p.ip_address, p.allocation_method,
+                   p.resource_group,
+                   n.name AS nic_name,
+                   v.name AS vm_name,
+                   v.resource_group AS vm_rg,
+                   v.power_state
+            FROM public_ips p
+            LEFT JOIN nics n ON LOWER(n.nic_id) = LOWER(p.nic_id)
+            LEFT JOIN vms v ON LOWER(v.vm_id) = LOWER(n.vm_id)
+            WHERE p.ip_address IS NOT NULL
+            ORDER BY p.name
+        """).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+# ── Elastic Pool detail ───────────────────────────────────────────────────────
+
+def get_elastic_pool_by_name(resource_group: str, server_name: str, pool_name: str) -> dict | None:
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM elastic_pools WHERE LOWER(resource_group)=LOWER(?) AND LOWER(server_name)=LOWER(?) AND LOWER(name)=LOWER(?)",
+            (resource_group, server_name, pool_name),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_databases_in_pool(pool_id: str) -> list[dict]:
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM sql_databases WHERE elastic_pool_id LIKE ? ORDER BY name",
+            (f"%{pool_id.split('/')[-1]}%",),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
     finally:
         conn.close()
 

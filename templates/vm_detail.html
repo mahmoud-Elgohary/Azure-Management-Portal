@@ -270,11 +270,33 @@
 
 <!-- ── Logs tab ───────────────────────────────────────────────────────── -->
 <div class="tab-panel" id="tab-logs">
-  <div class="no-data-banner">
-    <i class="bi bi-terminal"></i>
-    Log queries for this VM are available in the
-    <a href="{{ url_for('kql_console') }}?resource={{ vm.name }}" class="text-link">KQL Console</a>.
-    <br><small class="mt-1 d-block text-muted">Logs are only available if this VM has diagnostic settings sending SecurityEvent / Syslog / WindowsEvent logs to the Log Analytics workspace.</small>
+  <div class="card">
+    <div class="card-header"><i class="bi bi-terminal me-1"></i> KQL Investigations — {{ vm.name }}</div>
+    <div class="card-body">
+      <p class="small text-muted mb-3">
+        Requires diagnostic settings sending <code>SecurityEvent</code> / <code>Syslog</code> /
+        <code>WindowsEvent</code> logs to Log Analytics workspace.
+      </p>
+      <div class="row g-2">
+        {% set vname = vm.name %}
+        {% set vm_kql = [
+          ("Security Events (Windows)", "SecurityEvent\n| where Computer has '" ~ vname ~ "'\n| where TimeGenerated >= ago(1d)\n| where EventLevelName == 'Error' or EventID in (4625, 4648, 4768)\n| project TimeGenerated, EventID, Activity, Account, Computer\n| order by TimeGenerated desc"),
+          ("Failed Logins (Windows)", "SecurityEvent\n| where Computer has '" ~ vname ~ "'\n| where EventID == 4625\n| where TimeGenerated >= ago(1d)\n| project TimeGenerated, Account, IpAddress, FailureReason\n| order by TimeGenerated desc"),
+          ("Syslog Errors (Linux)", "Syslog\n| where Computer has '" ~ vname ~ "'\n| where SeverityLevel in ('err','crit','alert','emerg')\n| where TimeGenerated >= ago(1d)\n| project TimeGenerated, SeverityLevel, Facility, SyslogMessage\n| order by TimeGenerated desc"),
+          ("Process Events", "Event\n| where Computer has '" ~ vname ~ "'\n| where EventID in (4688, 4689)\n| where TimeGenerated >= ago(1d)\n| project TimeGenerated, EventID, Computer, RenderedDescription\n| order by TimeGenerated desc"),
+          ("VM Activity (Azure)", "AzureActivity\n| where ResourceGroup == '" ~ vm.resource_group ~ "'\n| where Properties contains '" ~ vname ~ "'\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, OperationNameValue, ActivityStatusValue\n| order by TimeGenerated desc"),
+          ("Heartbeat (Availability)", "Heartbeat\n| where Computer has '" ~ vname ~ "'\n| where TimeGenerated >= ago(1d)\n| summarize LastHeartbeat = max(TimeGenerated), count() by Computer, OSType\n| order by LastHeartbeat desc"),
+        ] %}
+        {% for label, query in vm_kql %}
+        <div class="col-md-6">
+          <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                  onclick="openKql({{ query | tojson }})">
+            <i class="bi bi-terminal me-1"></i>{{ label }}
+          </button>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
   </div>
 </div>
 {% endblock %}
@@ -305,6 +327,11 @@
       }
     });
   });
+
+  window.openKql = function(query) {
+    sessionStorage.setItem('kql_prefill', query);
+    location.href = '{{ url_for("kql_console") }}';
+  };
 
   window.filterVmNsg = function(filter) {
     document.querySelectorAll('#vm-nsg-table tbody tr').forEach(row => {

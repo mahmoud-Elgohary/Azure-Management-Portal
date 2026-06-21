@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+{% block title %}{{ pool.name }} — Elastic Pool — WTS Azure Manager{% endblock %}
+{% block page_title %}Elastic Pool: {{ pool.name }}{% endblock %}
+
+{% block content %}
+
+<!-- Breadcrumb -->
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb small">
+    <li class="breadcrumb-item"><a href="{{ url_for('sql_view') }}">SQL / Elastic Pools</a></li>
+    {% if server %}
+    <li class="breadcrumb-item"><a href="{{ url_for('sql_detail', resource_group=pool.resource_group, server_name=pool.server_name) }}">{{ pool.server_name }}</a></li>
+    {% endif %}
+    <li class="breadcrumb-item active">{{ pool.name }}</li>
+  </ol>
+</nav>
+
+<!-- Header -->
+<div class="d-flex align-items-center gap-3 mb-4">
+  <div style="width:48px;height:48px;background:linear-gradient(135deg,#059669,#047857);border-radius:10px;display:flex;align-items:center;justify-content:center">
+    <i class="bi bi-stack text-white fs-5"></i>
+  </div>
+  <div>
+    <h4 class="mb-0 fw-700">{{ pool.name }}</h4>
+    <div class="text-muted small">
+      Elastic Pool &nbsp;·&nbsp; {{ pool.server_name }} &nbsp;·&nbsp; {{ pool.resource_group }} &nbsp;·&nbsp; {{ pool.location }}
+    </div>
+  </div>
+  <div class="ms-auto d-flex gap-2">
+    <span class="badge {% if pool.state == 'Ready' %}bg-success{% else %}bg-secondary{% endif %} px-3 py-2">
+      <i class="bi {% if pool.state == 'Ready' %}bi-check-circle{% else %}bi-clock{% endif %} me-1"></i>{{ pool.state or '—' }}
+    </span>
+  </div>
+</div>
+
+<!-- KPIs -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-icon"><i class="bi bi-database"></i></div>
+      <div class="kpi-value text-primary">{{ databases | length }}</div>
+      <div class="kpi-label">Databases in Pool</div>
+      <div class="kpi-sub">Current members</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-icon"><i class="bi bi-cpu"></i></div>
+      <div class="kpi-value text-info">{{ pool.capacity or '—' }}</div>
+      <div class="kpi-label">Pool Capacity</div>
+      <div class="kpi-sub">{{ pool.sku_name or 'eDTUs / vCores' }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-icon"><i class="bi bi-layers"></i></div>
+      <div class="kpi-value text-secondary">{{ pool.edition or '—' }}</div>
+      <div class="kpi-label">Edition / Tier</div>
+      <div class="kpi-sub">Service tier</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <div class="kpi-icon"><i class="bi bi-lightbulb"></i></div>
+      <div class="kpi-value {% if advisor_recs %}text-warning{% else %}text-success{% endif %}">{{ advisor_recs | length }}</div>
+      <div class="kpi-label">Advisor Recommendations</div>
+      <div class="kpi-sub">Azure Advisor findings</div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+
+  <!-- Pool configuration -->
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header"><i class="bi bi-gear me-1"></i> Pool Configuration</div>
+      <div class="card-body">
+        <table class="table table-sm mb-0">
+          <tbody>
+            <tr><td class="text-muted small">Server</td><td class="fw-500">{{ pool.server_name }}</td></tr>
+            <tr><td class="text-muted small">Resource Group</td><td>{{ pool.resource_group }}</td></tr>
+            <tr><td class="text-muted small">Location</td><td>{{ pool.location }}</td></tr>
+            <tr><td class="text-muted small">SKU</td><td><code>{{ pool.sku_name or '—' }}</code></td></tr>
+            <tr><td class="text-muted small">Edition</td><td>{{ pool.edition or '—' }}</td></tr>
+            <tr><td class="text-muted small">Capacity</td><td><strong>{{ pool.capacity or '—' }}</strong></td></tr>
+            <tr><td class="text-muted small">State</td><td>
+              <span class="badge {% if pool.state == 'Ready' %}bg-success{% else %}bg-secondary{% endif %}">{{ pool.state or '—' }}</span>
+            </td></tr>
+            <tr><td class="text-muted small">Subscription</td><td><small class="text-muted">{{ pool.subscription_id or '—' }}</small></td></tr>
+            <tr><td class="text-muted small">Last Synced</td><td><small class="text-muted">{{ (pool.synced_at or '')[:19] }}</small></td></tr>
+          </tbody>
+        </table>
+        {% if pool.tags and pool.tags != '{}' and pool.tags != 'None' %}
+        <div class="mt-3">
+          <div class="text-muted small mb-1">Tags</div>
+          {% for k, v in (pool.tags | replace("'", '"') | from_json({}) | default({})).items() %}
+          <span class="badge bg-light text-dark border me-1 mb-1">{{ k }}: {{ v }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Databases in pool -->
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-database me-1"></i> Databases in this Pool
+        <span class="badge bg-secondary ms-auto">{{ databases | length }}</span>
+      </div>
+      <div class="card-body p-0">
+        {% if databases %}
+        <div class="table-responsive" style="max-height:320px;overflow-y:auto">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light sticky-top">
+              <tr><th>Name</th><th>Status</th><th>Edition</th><th>Location</th></tr>
+            </thead>
+            <tbody>
+              {% for db in databases %}
+              <tr>
+                <td class="fw-500">{{ db.name }}</td>
+                <td>
+                  <span class="badge {% if db.status == 'Online' %}bg-success{% elif db.status == 'Paused' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                    {{ db.status or '—' }}
+                  </span>
+                </td>
+                <td><small>{{ db.edition or '—' }}</small></td>
+                <td><small class="text-muted">{{ db.location or '—' }}</small></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="p-4 text-center text-muted">
+          <i class="bi bi-database fs-2 d-block mb-2"></i>
+          No databases found in this pool yet.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if advisor_recs %}
+    <!-- Advisor recommendations -->
+    <div class="card mt-3">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-lightbulb text-warning me-1"></i> Advisor Recommendations
+        <span class="badge bg-warning text-dark ms-auto">{{ advisor_recs | length }}</span>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+          <thead class="table-light">
+            <tr><th>Impact</th><th>Recommendation</th></tr>
+          </thead>
+          <tbody>
+            {% for rec in advisor_recs %}
+            <tr>
+              <td><span class="badge {% if rec.impact == 'High' %}bg-danger{% elif rec.impact == 'Medium' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ rec.impact }}</span></td>
+              <td><small>{{ (rec.short_description or '')[:100] }}</small></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+
+<!-- Investigate with KQL -->
+<div class="card mt-3">
+  <div class="card-header"><i class="bi bi-terminal me-1"></i> Investigate with KQL</div>
+  <div class="card-body">
+    <p class="small text-muted mb-3">Run queries against Log Analytics to investigate pool performance and errors.</p>
+    <div class="row g-2">
+      {% set pool_queries = [
+        ("Pool Performance", "AzureDiagnostics\n| where Resource =~ '{{ pool.name | upper }}'\n| where Category == 'ElasticPoolPercentageMetrics'\n| where TimeGenerated >= ago(1h)\n| project TimeGenerated, MetricName, Average\n| order by TimeGenerated desc"),
+        ("Pool eDTU Usage", "AzureMetrics\n| where ResourceId contains '{{ pool.name }}'\n| where MetricName == 'edtu_used'\n| summarize avg(Average) by bin(TimeGenerated, 5m)\n| order by TimeGenerated desc"),
+        ("Database Activity in Pool", "AzureDiagnostics\n| where ResourceType == 'DATABASES'\n| where ResourceId contains '{{ pool.server_name }}'\n| where TimeGenerated >= ago(24h)\n| where Category == 'SQLInsights'\n| project TimeGenerated, databaseName_s, event_s\n| order by TimeGenerated desc | limit 100"),
+      ] %}
+      {% for name, query in pool_queries %}
+      <div class="col-md-4">
+        <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                onclick="sessionStorage.setItem('kql_prefill', {{ query | tojson }}); location.href='{{ url_for('kql_console') }}';">
+          <i class="bi bi-terminal me-1"></i>{{ name }}
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}

@@ -115,10 +115,38 @@
 </div>
 {% endif %}
 
+<!-- KQL Investigations -->
+<div class="card mt-3">
+  <div class="card-header"><i class="bi bi-terminal me-1"></i> KQL Investigations — {{ nsg.name }}</div>
+  <div class="card-body">
+    <div class="row g-2">
+      {% set nsg_queries = [
+        ("NSG Changes (7d)", "AzureActivity\n| where OperationNameValue contains 'networkSecurityGroups'\n| where Properties contains '" ~ nsg.name ~ "'\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, Caller, OperationNameValue, ActivityStatusValue\n| order by TimeGenerated desc"),
+        ("NSG Flow Logs", "AzureNetworkAnalytics_CL\n| where NSGName_s == '" ~ nsg.name ~ "'\n| where TimeGenerated >= ago(1d)\n| project TimeGenerated, FlowStatus_s, L4Protocol_s, SrcIP_s, DestPort_d, DestIP_s\n| order by TimeGenerated desc"),
+        ("Blocked Traffic", "AzureNetworkAnalytics_CL\n| where NSGName_s == '" ~ nsg.name ~ "'\n| where FlowStatus_s == 'D'\n| where TimeGenerated >= ago(1d)\n| summarize count() by SrcIP_s, DestPort_d\n| order by count_ desc"),
+        ("Rule Modification", "AzureActivity\n| where ResourceGroup == '" ~ nsg.resource_group ~ "'\n| where OperationNameValue has 'securityRules'\n| where TimeGenerated >= ago(30d)\n| project TimeGenerated, Caller, OperationNameValue, ActivityStatusValue\n| order by TimeGenerated desc"),
+      ] %}
+      {% for label, query in nsg_queries %}
+      <div class="col-md-6">
+        <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                onclick="openKql({{ query | tojson }})">
+          <i class="bi bi-terminal me-1"></i>{{ label }}
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
 <script>
+function openKql(query) {
+  sessionStorage.setItem('kql_prefill', query);
+  location.href = '{{ url_for("kql_console") }}';
+}
+
 function filterRules(mode) {
   const rows = document.querySelectorAll('.rule-row');
   let visible = 0;

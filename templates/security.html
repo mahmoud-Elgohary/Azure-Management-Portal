@@ -2,6 +2,10 @@
 {% block title %}Security Center — WTS Azure Manager{% endblock %}
 {% block page_title %}Security Center{% endblock %}
 
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
 {% block content %}
 
 <!-- Security score + KPI row -->
@@ -312,6 +316,104 @@
   </div>
 
 </div>
+
+<!-- ── Additional Security Sections ──────────────────────────────── -->
+<div class="row g-3 mt-1">
+  <!-- Public IP Exposure -->
+  {% if public_ip_exposure %}
+  <div class="col-12">
+    <div class="card {% if public_ip_exposure | length > 5 %}border-warning{% endif %}">
+      <div class="card-header d-flex align-items-center gap-2">
+        <i class="bi bi-globe {% if public_ip_exposure | length > 5 %}text-warning{% else %}text-muted{% endif %} me-1"></i>
+        Public IP Exposure
+        <span class="badge {% if public_ip_exposure | length > 5 %}bg-warning text-dark{% else %}bg-secondary{% endif %} ms-auto">{{ public_ip_exposure | length }} public IPs</span>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive" style="max-height:260px;overflow-y:auto">
+          <table class="table table-sm mb-0">
+            <thead class="table-light sticky-top">
+              <tr><th>IP Address</th><th>Name</th><th>Allocation</th><th>Attached NIC</th><th>VM</th><th>Power State</th><th>RG</th></tr>
+            </thead>
+            <tbody>
+              {% for pip in public_ip_exposure %}
+              <tr>
+                <td><strong class="text-danger">{{ pip.ip_address or '—' }}</strong></td>
+                <td><small>{{ pip.name }}</small></td>
+                <td>
+                  <span class="badge {% if pip.allocation_method == 'Static' %}bg-warning text-dark{% else %}bg-secondary{% endif %}" style="font-size:.7rem">
+                    {{ pip.allocation_method or '—' }}
+                  </span>
+                </td>
+                <td><small class="text-muted">{{ pip.nic_name or '—' }}</small></td>
+                <td>
+                  {% if pip.vm_name %}
+                  <a href="/vms/{{ pip.vm_rg }}/{{ pip.vm_name }}" class="text-link small">{{ pip.vm_name }}</a>
+                  {% else %}<small class="text-muted">—</small>{% endif %}
+                </td>
+                <td>
+                  {% if pip.power_state %}
+                  <span class="badge {% if pip.power_state == 'running' %}bg-success{% else %}bg-secondary{% endif %}" style="font-size:.7rem">{{ pip.power_state }}</span>
+                  {% else %}—{% endif %}
+                </td>
+                <td><small class="text-muted">{{ pip.resource_group or '—' }}</small></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="px-3 py-2 bg-info bg-opacity-10 border-top small text-info">
+          <i class="bi bi-lightbulb me-1"></i>
+          <strong>Tip:</strong> Review each public IP. Use Azure Bastion for SSH/RDP access instead of direct public IPs. Remove unused public IPs to reduce attack surface.
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Security trend chart -->
+  {% if sec_history | length > 1 %}
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header d-flex align-items-center">
+        <i class="bi bi-graph-up me-1 text-primary"></i> Security Score Trend
+        <span class="text-muted small ms-2">(based on resource count snapshots)</span>
+      </div>
+      <div class="card-body">
+        <div style="height:160px"><canvas id="chart-security-trend"></canvas></div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- KQL Investigation links -->
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header"><i class="bi bi-terminal me-1"></i> Security Investigations (KQL)</div>
+      <div class="card-body">
+        <p class="small text-muted mb-3">Run security queries directly against Log Analytics. Requires Log Analytics workspace configuration.</p>
+        <div class="row g-2">
+          {% set sec_queries = [
+            ("Failed Sign-ins", "SigninLogs\n| where ResultType != 0\n| where TimeGenerated >= ago(1d)\n| summarize count() by UserPrincipalName, ResultDescription\n| order by count_ desc\n| limit 50"),
+            ("Brute-Force Detection", "SigninLogs\n| where ResultType != 0\n| where TimeGenerated >= ago(1h)\n| summarize FailedAttempts = count() by IPAddress, UserPrincipalName\n| where FailedAttempts >= 5\n| order by FailedAttempts desc"),
+            ("Admin Group Changes", "AuditLogs\n| where OperationName contains 'member'\n| where TargetResources[0].type == 'Group'\n| project TimeGenerated, InitiatedBy, TargetResources, OperationName, Result\n| order by TimeGenerated desc"),
+            ("Role Assignments", "AzureActivity\n| where OperationNameValue == 'MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/WRITE'\n| project TimeGenerated, Caller, ResourceGroup, Properties\n| order by TimeGenerated desc | limit 50"),
+            ("NSG Denied Flows", "AzureNetworkAnalytics_CL\n| where SubType_s == 'FlowLog'\n| where FlowStatus_s == 'D'\n| summarize Denied = count() by SrcIP_s, DestIP_s\n| order by Denied desc | limit 50"),
+            ("Security Alerts", "SecurityAlert\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, AlertName, Severity, Entities\n| order by TimeGenerated desc"),
+          ] %}
+          {% for name, query in sec_queries %}
+          <div class="col-md-4">
+            <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                    onclick="sessionStorage.setItem('kql_prefill', {{ query | tojson }}); location.href='{{ url_for('kql_console') }}';">
+              <i class="bi bi-terminal me-1"></i>{{ name }}
+            </button>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -323,5 +425,39 @@ function filterRules(filter) {
     else row.style.display = row.dataset.access === filter ? '' : 'none';
   });
 }
+
+{% if sec_history | length > 1 %}
+(function() {
+  const history = {{ sec_history | tojson }};
+  const labels  = history.map(h => h.date);
+  const scores  = history.map(h => h.score);
+  const ctx = document.getElementById('chart-security-trend');
+  if (!ctx) return;
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Security Score',
+        data: scores,
+        borderColor: '#0078d4',
+        backgroundColor: 'rgba(0,120,212,.08)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 3,
+        pointBackgroundColor: scores.map(s => s >= 75 ? '#16a34a' : s >= 50 ? '#d97706' : '#dc2626'),
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 10, font: { size: 10 } } },
+        y: { min: 0, max: 100, ticks: { font: { size: 10 }, callback: v => v + '/100' } }
+      }
+    }
+  });
+})();
+{% endif %}
 </script>
 {% endblock %}

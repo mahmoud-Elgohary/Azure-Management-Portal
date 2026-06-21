@@ -1,47 +1,106 @@
 {% extends "base.html" %}
-{% block title %}Alerts — WTS Azure Manager{% endblock %}
-{% block page_title %}Azure Monitor Alerts{% endblock %}
+{% block title %}Alert Center — WTS Azure Manager{% endblock %}
+{% block page_title %}Alert Center{% endblock %}
 
 {% block content %}
 
-<!-- Summary badges -->
-<div class="d-flex gap-2 mb-3 flex-wrap">
-  {% if summary %}
-    {% for sev, cnt in summary.items() | sort %}
-    <span class="badge fs-6 {% if sev == 'Sev0' %}bg-danger{% elif sev == 'Sev1' %}bg-danger bg-opacity-75{% elif sev == 'Sev2' %}bg-warning text-dark{% elif sev == 'Sev3' %}bg-info text-dark{% else %}bg-secondary{% endif %}">
-      {{ sev }}: {{ cnt }}
-    </span>
-    {% endfor %}
-  {% endif %}
-  <span class="text-muted small ms-2 align-self-center">{{ items|length }} total alerts cached</span>
+<!-- KPI row -->
+<div class="row g-3 mb-4">
+  {% set sev0 = summary.get('Sev0', 0) %}
+  {% set sev1 = summary.get('Sev1', 0) %}
+  {% set sev2 = summary.get('Sev2', 0) %}
+  {% set sev3_4 = summary.get('Sev3', 0) + summary.get('Sev4', 0) %}
+  {% set total = items | length %}
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card border-danger border-opacity-50">
+      <i class="bi bi-exclamation-octagon kpi-icon text-danger" style="opacity:.15"></i>
+      <div class="kpi-value {% if sev0 + sev1 > 0 %}text-danger{% else %}text-success{% endif %}">
+        {{ sev0 + sev1 }}
+      </div>
+      <div class="kpi-label">Critical / High</div>
+      <div class="kpi-sub">Sev0 + Sev1 alerts</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card border-warning border-opacity-50">
+      <i class="bi bi-exclamation-triangle kpi-icon text-warning" style="opacity:.2"></i>
+      <div class="kpi-value {% if sev2 > 0 %}text-warning{% else %}text-success{% endif %}">
+        {{ sev2 }}
+      </div>
+      <div class="kpi-label">Medium</div>
+      <div class="kpi-sub">Sev2 alerts</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <i class="bi bi-info-circle kpi-icon"></i>
+      <div class="kpi-value text-info">{{ sev3_4 }}</div>
+      <div class="kpi-label">Low / Informational</div>
+      <div class="kpi-sub">Sev3 + Sev4 alerts</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <i class="bi bi-bell kpi-icon"></i>
+      <div class="kpi-value text-primary">{{ total }}</div>
+      <div class="kpi-label">Total Active</div>
+      <div class="kpi-sub">All severities</div>
+    </div>
+  </div>
 </div>
 
 {% if not items %}
-<div class="no-data-banner">
+<div class="no-data-banner mb-4">
   <i class="bi bi-bell-slash"></i>
-  No alerts in the cache.
-  {% if summary is not defined or not summary %}
-  <br><small class="mt-2 d-block">Alert sync is not yet configured. Add <code>azure-mgmt-monitor</code> to requirements and wire up <code>azure_client/alerts.py</code>, or check that the SP has <strong>Monitoring Reader</strong> role on the subscription.</small>
-  {% endif %}
+  <div>
+    <strong>No alerts in cache.</strong><br>
+    <small class="mt-2 d-block">
+      Alert sync requires <strong>Monitoring Reader</strong> role on the subscription.
+      Azure Monitor Alert sync is configured in <code>azure_client/alerts.py</code>.
+      Run a sync to pull the latest alerts.
+    </small>
+  </div>
 </div>
 {% else %}
+
+<!-- Severity filter pills -->
+<div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+  <span class="small text-muted fw-500">Severity:</span>
+  <button class="btn btn-sm btn-outline-secondary active" onclick="filterAlerts('','',this)">All</button>
+  <button class="btn btn-sm btn-outline-danger" onclick="filterAlerts('Sev0','',this)">Sev0 Critical</button>
+  <button class="btn btn-sm btn-outline-danger" onclick="filterAlerts('Sev1','',this)">Sev1 High</button>
+  <button class="btn btn-sm btn-outline-warning" onclick="filterAlerts('Sev2','',this)">Sev2 Medium</button>
+  <button class="btn btn-sm btn-outline-info" onclick="filterAlerts('Sev3','',this)">Sev3 Low</button>
+  <span class="vr mx-1"></span>
+  <button class="btn btn-sm btn-outline-danger" onclick="filterAlerts('','Fired',this)">
+    <i class="bi bi-fire me-1"></i>Fired
+  </button>
+  <button class="btn btn-sm btn-outline-success" onclick="filterAlerts('','Resolved',this)">
+    <i class="bi bi-check-circle me-1"></i>Resolved
+  </button>
+  <span class="ms-auto text-muted small" id="alert-count">{{ total }} alerts</span>
+</div>
+
 <div class="card">
   <div class="card-header d-flex align-items-center">
     <i class="bi bi-bell me-1"></i> Active Alerts
     <div class="ms-auto d-flex gap-2">
-      <select id="sev-filter" class="form-select form-select-sm" style="width:auto" onchange="filterAlerts()">
+      <select id="sev-filter" class="form-select form-select-sm" style="width:auto" onchange="filterAlerts(this.value, document.getElementById('state-filter').value, null)">
         <option value="">All severities</option>
         <option>Sev0</option><option>Sev1</option><option>Sev2</option><option>Sev3</option><option>Sev4</option>
       </select>
-      <select id="state-filter" class="form-select form-select-sm" style="width:auto" onchange="filterAlerts()">
+      <select id="state-filter" class="form-select form-select-sm" style="width:auto" onchange="filterAlerts(document.getElementById('sev-filter').value, this.value, null)">
         <option value="">All states</option>
         <option>Fired</option><option>Resolved</option>
       </select>
+      <button class="btn btn-sm btn-outline-success" onclick="exportAlertsCsv()">
+        <i class="bi bi-download me-1"></i>CSV
+      </button>
     </div>
   </div>
   <div class="table-responsive">
     <table class="table table-sm table-hover mb-0" id="alerts-table">
-      <thead class="table-light">
+      <thead class="table-dark">
         <tr>
           <th>Severity</th>
           <th>Alert Rule</th>
@@ -53,21 +112,33 @@
       </thead>
       <tbody>
         {% for a in items %}
-        <tr data-sev="{{ a.severity }}" data-state="{{ a.monitor_condition }}">
+        <tr data-sev="{{ a.severity }}" data-state="{{ a.monitor_condition }}"
+            class="{% if a.monitor_condition == 'Fired' and a.severity in ('Sev0','Sev1') %}table-danger{% elif a.monitor_condition == 'Fired' and a.severity == 'Sev2' %}table-warning{% endif %}">
           <td>
-            <span class="fw-bold {% if a.severity in ('Sev0','Sev1') %}sev-critical{% elif a.severity == 'Sev2' %}sev-high{% elif a.severity == 'Sev3' %}sev-medium{% else %}sev-info{% endif %}">
+            <span class="badge fw-bold
+              {% if a.severity == 'Sev0' %}bg-danger
+              {% elif a.severity == 'Sev1' %}bg-danger bg-opacity-75
+              {% elif a.severity == 'Sev2' %}bg-warning text-dark
+              {% elif a.severity == 'Sev3' %}bg-info text-dark
+              {% else %}bg-secondary{% endif %}">
               {{ a.severity }}
             </span>
           </td>
-          <td>{{ a.alert_rule or '—' }}</td>
-          <td><small>{{ a.target_resource_name or a.target_resource or '—' }}</small></td>
+          <td><small class="fw-500">{{ a.alert_rule or '—' }}</small></td>
+          <td>
+            <small class="text-muted" title="{{ a.target_resource }}">
+              {{ a.target_resource_name or a.target_resource or '—' }}
+            </small>
+          </td>
           <td>
             <span class="badge {% if a.monitor_condition == 'Fired' %}bg-danger{% else %}bg-success{% endif %}">
               {{ a.monitor_condition or '—' }}
             </span>
           </td>
-          <td><small>{{ a.fired_time[:19].replace('T',' ') if a.fired_time else '—' }} UTC</small></td>
-          <td><small>{{ a.description or '—' }}</small></td>
+          <td class="text-nowrap">
+            <small>{{ a.fired_time[:19].replace('T',' ') if a.fired_time else '—' }} UTC</small>
+          </td>
+          <td><small class="text-muted">{{ a.description or '—' }}</small></td>
         </tr>
         {% endfor %}
       </tbody>
@@ -75,17 +146,84 @@
   </div>
 </div>
 {% endif %}
+
+<!-- KQL Investigation -->
+<div class="card mt-3">
+  <div class="card-header"><i class="bi bi-terminal me-1"></i> Alert KQL Investigations</div>
+  <div class="card-body">
+    <p class="small text-muted mb-3">
+      Investigate alerts and anomalies via Log Analytics. Requires AzureActivity and Alert tables.
+    </p>
+    <div class="row g-2">
+      {% set alert_kql = [
+        ('Alert History 24h', 'AzureActivity\n| where ActivityStatusValue in ("Failed","Failure")\n| where TimeGenerated >= ago(1d)\n| summarize count() by bin(TimeGenerated, 1h), ResourceProviderValue\n| render timechart'),
+        ('High Severity Events', 'AlertsManagementResources\n| where type == "microsoft.alertsmanagement/alerts"\n| where tostring(properties.severity) in ("Sev0","Sev1")\n| project name, severity=properties.severity, state=properties.essentials.monitorCondition, firedTime=properties.essentials.startDateTime\n| order by firedTime desc'),
+        ('Failed Auth Attempts', 'SigninLogs\n| where TimeGenerated >= ago(1d)\n| where ResultType != 0\n| summarize count() by bin(TimeGenerated, 1h), UserPrincipalName\n| order by TimeGenerated desc'),
+        ('Resource Health Changes', 'ResourceHealth\n| where TimeGenerated >= ago(7d)\n| where AvailabilityState != "Available"\n| project TimeGenerated, ResourceGroup, Resource, AvailabilityState, Summary\n| order by TimeGenerated desc'),
+        ('Throttled API Calls', 'AzureActivity\n| where TimeGenerated >= ago(1d)\n| where ActivityStatusValue == "Failed"\n| where StatusCode == 429\n| project TimeGenerated, Caller, OperationNameValue, ResourceGroup\n| order by TimeGenerated desc'),
+        ('Security Events Spike', 'SecurityEvent\n| where TimeGenerated >= ago(1d)\n| where EventLevelName == "Error" or EventID in (4625, 4648, 4768, 4769)\n| summarize count() by bin(TimeGenerated, 1h), EventID\n| render timechart'),
+      ] %}
+      {% for label, query in alert_kql %}
+      <div class="col-md-4">
+        <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                onclick="openKql({{ query | tojson }})">
+          <i class="bi bi-terminal me-1"></i>{{ label }}
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
 <script>
-function filterAlerts() {
-  const sev   = document.getElementById('sev-filter').value;
-  const state = document.getElementById('state-filter').value;
+function openKql(query) {
+  sessionStorage.setItem('kql_prefill', query);
+  location.href = '{{ url_for("kql_console") }}';
+}
+
+function filterAlerts(sev, state, btn) {
+  if (btn) {
+    document.querySelectorAll('.d-flex .btn-sm').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const sevSel = document.getElementById('sev-filter');
+    const stateSel = document.getElementById('state-filter');
+    if (sevSel) sevSel.value = sev;
+    if (stateSel) stateSel.value = state;
+  }
+  let count = 0;
   document.querySelectorAll('#alerts-table tbody tr').forEach(tr => {
-    const match = (!sev || tr.dataset.sev === sev) && (!state || tr.dataset.state === state);
-    tr.style.display = match ? '' : 'none';
+    const matchSev   = !sev   || tr.dataset.sev   === sev;
+    const matchState = !state || tr.dataset.state === state;
+    const show = matchSev && matchState;
+    tr.style.display = show ? '' : 'none';
+    if (show) count++;
   });
+  const counter = document.getElementById('alert-count');
+  if (counter) counter.textContent = count + ' alerts';
+}
+
+function exportAlertsCsv() {
+  const table = document.getElementById('alerts-table');
+  if (!table) return;
+  const rows = [];
+  const headers = [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());
+  rows.push(headers.join(','));
+  table.querySelectorAll('tbody tr').forEach(tr => {
+    if (tr.style.display === 'none') return;
+    const cells = [...tr.querySelectorAll('td')].map(td => {
+      const val = (td.textContent || '').trim().replace(/\s+/g, ' ');
+      return '"' + val.replace(/"/g, '""') + '"';
+    });
+    rows.push(cells.join(','));
+  });
+  const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'alerts_' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
 }
 </script>
 {% endblock %}

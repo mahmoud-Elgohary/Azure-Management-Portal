@@ -86,6 +86,12 @@
             {% set detail_url = url_for('sql_detail', resource_group=r.resource_group, server_name=r.name) %}
           {% elif r.type == 'PostgreSQL Server' and r.resource_group %}
             {% set detail_url = url_for('postgresql_detail', resource_group=r.resource_group, server_name=r.name) %}
+          {% elif r.type == 'NSG' and r.resource_group %}
+            {% set detail_url = url_for('nsg_detail', resource_group=r.resource_group, nsg_name=r.name) %}
+          {% elif r.type == 'App Gateway' and r.resource_group %}
+            {% set detail_url = url_for('appgateway_detail', resource_group=r.resource_group, gw_name=r.name) %}
+          {% elif r.type == 'Elastic Pool' and r.resource_group %}
+            {% set detail_url = url_for('sql_view') %}
           {% endif %}
           <tr {% if detail_url %}style="cursor:pointer" onclick="location.href='{{ detail_url }}'"{% endif %}>
             <td class="fw-500">

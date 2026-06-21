@@ -3,7 +3,51 @@
 {% block page_title %}SQL / Elastic Pools{% endblock %}
 
 {% block content %}
-<h5 class="mb-3">SQL Servers &amp; Elastic Pools</h5>
+
+<!-- KPI row -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <i class="bi bi-database kpi-icon"></i>
+      <div class="kpi-value text-primary">{{ servers | length }}</div>
+      <div class="kpi-label">SQL Servers</div>
+      <div class="kpi-sub">
+        {% set ready = servers | selectattr('state', 'equalto', 'Ready') | list | length %}
+        <span class="badge bg-success bg-opacity-15 text-success border border-success border-opacity-25">{{ ready }} ready</span>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <i class="bi bi-layers kpi-icon"></i>
+      <div class="kpi-value text-success">{{ pools | length }}</div>
+      <div class="kpi-label">Elastic Pools</div>
+      <div class="kpi-sub">Resource pools</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <i class="bi bi-table kpi-icon"></i>
+      <div class="kpi-value text-muted">{{ databases | length }}</div>
+      <div class="kpi-label">Databases</div>
+      <div class="kpi-sub">
+        {% set online = databases | selectattr('status', 'equalto', 'Online') | list | length %}
+        <span class="badge bg-success bg-opacity-15 text-success border border-success border-opacity-25">{{ online }} online</span>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card kpi-card">
+      <i class="bi bi-geo-alt kpi-icon"></i>
+      <div class="kpi-value text-muted" style="font-size:1.1rem">
+        {% set locations = servers | map(attribute='location') | select | unique | list %}
+        {{ locations | length }}
+      </div>
+      <div class="kpi-label">Regions</div>
+      <div class="kpi-sub">{{ locations[:2] | join(', ') if locations else '—' }}</div>
+    </div>
+  </div>
+</div>
 
 <!-- Filter -->
 <form class="row g-2 mb-3" method="get">
@@ -32,13 +76,17 @@
     <tbody>
       {% for p in pools %}
       <tr>
-        <td>{{ p.name }}</td>
-        <td>{{ p.server_name }}</td>
-        <td>{{ p.resource_group }}</td>
+        <td>
+          <a href="{{ url_for('elastic_pool_detail', resource_group=p.resource_group, server_name=p.server_name, pool_name=p.name) }}" class="text-link fw-500">
+            <i class="bi bi-stack me-1 text-success" style="font-size:.85rem"></i>{{ p.name }}
+          </a>
+        </td>
+        <td><small>{{ p.server_name }}</small></td>
+        <td><small>{{ p.resource_group }}</small></td>
         <td>{{ p.edition or '—' }}</td>
-        <td><code>{{ p.sku_name or '—' }}</code></td>
-        <td>{{ p.capacity or '—' }}</td>
-        <td>{{ p.db_count }}</td>
+        <td><code class="small">{{ p.sku_name or '—' }}</code></td>
+        <td><strong>{{ p.capacity or '—' }}</strong></td>
+        <td><span class="badge bg-primary bg-opacity-15 text-primary border border-primary border-opacity-25">{{ p.db_count }} DBs</span></td>
         <td><span class="badge {% if p.state == 'Ready' %}bg-success{% else %}bg-warning text-dark{% endif %}">{{ p.state or '—' }}</span></td>
       </tr>
       {% endfor %}
