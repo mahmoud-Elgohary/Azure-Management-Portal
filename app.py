@@ -197,10 +197,12 @@ def dashboard():
             "recent_changes": queries.get_recent_changes_summary(),
             "cost_anomalies": detect_anomalies(daily),
             "currency": queries.get_cost_currency(),
+            "reservation_summary": queries.get_reservation_summary(),
+            "devops_summary": queries.get_devops_summary(),
         }
     except Exception as exc:
         flash(_rbac_error(exc), "danger")
-        ctx = {"sync": queries.last_sync_info(), "stats": {}, "mtd_cost": 0, "budget": config.MONTHLY_BUDGET, "cost_anomalies": [], "currency": "EUR"}
+        ctx = {"sync": queries.last_sync_info(), "stats": {}, "mtd_cost": 0, "budget": config.MONTHLY_BUDGET, "cost_anomalies": [], "currency": "EUR", "reservation_summary": {}, "devops_summary": {}}
     return render_template("dashboard.html", **ctx)
 
 

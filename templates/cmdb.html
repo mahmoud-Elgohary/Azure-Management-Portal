@@ -146,6 +146,32 @@
   </div>
 </div>
 
+<!-- KQL Investigation -->
+<div class="card mt-4">
+  <div class="card-header"><i class="bi bi-terminal me-1"></i> Asset & Inventory Investigations (KQL)</div>
+  <div class="card-body">
+    <p class="small text-muted mb-3">Query your resource inventory, compliance state, and configuration drift.</p>
+    <div class="row g-2">
+      {% set cmdb_queries = [
+        ("All Resource Types", "Resources\n| summarize Count = count() by type\n| order by Count desc\n| limit 30"),
+        ("Resources Without Tags", "Resources\n| where isnull(tags) or tags == '{}'\n| project name, type, resourceGroup, location\n| order by type asc\n| limit 50"),
+        ("Resources by Region", "Resources\n| summarize Count = count() by location\n| order by Count desc"),
+        ("Resource Changes (7d)", "ResourceChanges\n| where TimeGenerated >= ago(7d)\n| project TimeGenerated, resourceGroup, resourceType, changeType, changedByType\n| order by TimeGenerated desc\n| limit 50"),
+        ("Missing Required Tags", "Resources\n| where isnull(tags['environment']) or isnull(tags['owner'])\n| project name, type, resourceGroup, tags\n| order by type asc\n| limit 50"),
+        ("Orphaned Disks", "Resources\n| where type == 'microsoft.compute/disks'\n| where isnull(managedBy) or managedBy == ''\n| project name, resourceGroup, location, properties.diskSizeGB\n| order by name asc"),
+      ] %}
+      {% for name, query in cmdb_queries %}
+      <div class="col-md-4">
+        <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                onclick="sessionStorage.setItem('kql_prefill', {{ query | tojson }}); location.href='{{ url_for('kql_console') }}'">
+          <i class="bi bi-terminal me-1"></i>{{ name }}
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}

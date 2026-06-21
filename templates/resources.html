@@ -120,4 +120,30 @@
 </div>
 {% endif %}
 
+<!-- KQL Investigation -->
+<div class="card mt-4">
+  <div class="card-header"><i class="bi bi-terminal me-1"></i> Resource Graph Investigations (KQL)</div>
+  <div class="card-body">
+    <p class="small text-muted mb-3">Run Azure Resource Graph queries to explore and audit your resource estate.</p>
+    <div class="row g-2">
+      {% set res_queries = [
+        ("Top Resource Types", "Resources\n| summarize Count = count() by type\n| order by Count desc\n| limit 20"),
+        ("Public IPs in Use", "Resources\n| where type == 'microsoft.network/publicipaddresses'\n| project name, resourceGroup, location, properties.ipAddress, properties.publicIPAllocationMethod\n| order by resourceGroup asc"),
+        ("VMs with Public IP", "Resources\n| where type == 'microsoft.compute/virtualmachines'\n| join kind=leftouter (Resources\n    | where type == 'microsoft.network/networkinterfaces'\n    | mv-expand ipconfig = properties.ipConfigurations\n    | where isnotnull(ipconfig.properties.publicIPAddress)\n    | project vmId = tostring(properties.virtualMachine.id), hasPublicIP = true\n  ) on $left.id == $right.vmId\n| where hasPublicIP == true\n| project name, resourceGroup, location"),
+        ("Resources in Eastus", "Resources\n| where location == 'eastus'\n| summarize Count = count() by type\n| order by Count desc"),
+        ("Large Managed Disks", "Resources\n| where type == 'microsoft.compute/disks'\n| extend SizeGB = toint(properties.diskSizeGB)\n| where SizeGB >= 256\n| project name, resourceGroup, SizeGB, properties.diskState\n| order by SizeGB desc"),
+        ("Stopped VMs (Billed)", "Resources\n| where type == 'microsoft.compute/virtualmachines'\n| where properties.extended.instanceView.powerState.displayStatus == 'VM stopped'\n| project name, resourceGroup, location, properties.hardwareProfile.vmSize\n| order by resourceGroup asc"),
+      ] %}
+      {% for name, query in res_queries %}
+      <div class="col-md-4">
+        <button class="btn btn-sm btn-outline-secondary w-100 text-start"
+                onclick="sessionStorage.setItem('kql_prefill', {{ query | tojson }}); location.href='{{ url_for('kql_console') }}'">
+          <i class="bi bi-terminal me-1"></i>{{ name }}
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
 {% endblock %}

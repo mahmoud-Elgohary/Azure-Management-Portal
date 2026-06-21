@@ -11,6 +11,17 @@
 {% set s = stats or {} %}
 {% set sec = security_score or {} %}
 {% set sec_score = sec.score | default(0) | int %}
+{% set rsv = reservation_summary or {} %}
+{% set dvo = devops_summary or {} %}
+
+{% if rsv.get('expiring_soon') %}
+<div class="alert alert-warning alert-dismissible fade show mb-3 py-2" role="alert">
+  <i class="bi bi-bookmark-x-fill me-2"></i>
+  <strong>{{ rsv.get('expiring_soon') }} reservation{{ 's' if rsv.get('expiring_soon') != 1 else '' }} expiring within 30 days.</strong>
+  <a href="{{ url_for('reservations_view') }}" class="btn btn-sm btn-warning ms-3 py-0">Review</a>
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
 
 {% if cost_anomalies %}
 <div class="alert alert-warning alert-dismissible fade show mb-3 py-2" role="alert">
@@ -178,6 +189,57 @@
   </div>
 
 </div>
+
+<!-- ── Row 2b: Reservations + DevOps ──────────────────────────────────── -->
+{% if rsv or dvo %}
+<div class="row g-3 mb-3">
+
+  {% if rsv.get('total') %}
+  <div class="col-6 col-xl-3">
+    <a href="{{ url_for('reservations_view') }}" class="text-decoration-none">
+      <div class="card kpi-card kpi-link">
+        <div class="kpi-icon"><i class="bi bi-bookmark-check"></i></div>
+        <div class="kpi-value {% if rsv.get('expiring_soon') %}text-warning{% else %}text-success{% endif %}">
+          {{ rsv.get('active', 0) }}
+        </div>
+        <div class="kpi-label">Active Reservations</div>
+        <div class="kpi-sub">
+          {% if rsv.get('expiring_soon') %}
+          <span class="badge bg-warning bg-opacity-15 text-warning border border-warning border-opacity-25">{{ rsv.get('expiring_soon') }} expiring ≤30d</span>
+          {% else %}
+          <span class="badge bg-success bg-opacity-15 text-success border border-success border-opacity-25">None expiring soon</span>
+          {% endif %}
+        </div>
+      </div>
+    </a>
+  </div>
+  {% endif %}
+
+  {% if dvo.get('active_projects') %}
+  <div class="col-6 col-xl-3">
+    <a href="{{ url_for('devops_view') }}" class="text-decoration-none">
+      <div class="card kpi-card kpi-link">
+        <div class="kpi-icon"><i class="bi bi-git"></i></div>
+        <div class="kpi-value {% if dvo.get('failing_pipelines') %}text-danger{% else %}text-success{% endif %}">
+          {{ dvo.get('active_projects', 0) }}
+        </div>
+        <div class="kpi-label">DevOps Projects</div>
+        <div class="kpi-sub">
+          {% if dvo.get('failing_pipelines') %}
+          <span class="badge bg-danger bg-opacity-15 text-danger border border-danger border-opacity-25">{{ dvo.get('failing_pipelines') }} pipelines failing</span>
+          {% elif dvo.get('builds_ok_24h') is not none %}
+          <span class="badge bg-success bg-opacity-15 text-success border border-success border-opacity-25">Builds healthy</span>
+          {% else %}
+          <span class="badge bg-secondary bg-opacity-15 text-secondary border border-secondary border-opacity-25">{{ dvo.get('enabled_pipelines', 0) }} pipelines</span>
+          {% endif %}
+        </div>
+      </div>
+    </a>
+  </div>
+  {% endif %}
+
+</div>
+{% endif %}
 
 <!-- ── Row 3: Charts ──────────────────────────────────────────────────── -->
 <div class="row g-3 mb-3">

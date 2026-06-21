@@ -76,9 +76,7 @@
             <th>SKU</th>
             <th>Storage (GiB)</th>
             <th>Location</th>
-            <th>FQDN</th>
-            <th>HA</th>
-            <th>Backup Retention</th>
+            <th>Last Synced</th>
           </tr>
         </thead>
         <tbody>
@@ -86,7 +84,7 @@
           <tr>
             <td class="fw-500">
               <a href="{{ url_for('postgresql_detail', resource_group=s.resource_group, server_name=s.name) }}" class="text-decoration-none">
-                {{ s.name }}
+                <i class="bi bi-database-fill-gear me-1 text-info" style="font-size:.85rem"></i>{{ s.name }}
               </a>
             </td>
             <td><small>{{ s.resource_group or '—' }}</small></td>
@@ -102,28 +100,10 @@
             <td>
               <span class="badge bg-primary bg-opacity-75">{{ s.version or '—' }}</span>
             </td>
-            <td><code class="small">{{ s.sku or '—' }}</code></td>
+            <td><code class="small">{{ s.sku_name or s.sku or '—' }}</code></td>
             <td>{{ s.storage_gb if s.storage_gb else '—' }}</td>
             <td><small>{{ s.location or '—' }}</small></td>
-            <td>
-              {% if s.fqdn %}
-              <code class="small text-muted">{{ s.fqdn }}</code>
-              {% else %}—{% endif %}
-            </td>
-            <td>
-              {% if s.ha_mode %}
-              <span class="badge {% if s.ha_mode == 'ZoneRedundant' %}bg-success{% else %}bg-secondary{% endif %}">
-                {{ s.ha_mode }}
-              </span>
-              {% else %}
-              <span class="text-muted small">—</span>
-              {% endif %}
-            </td>
-            <td>
-              {% if s.backup_retention_days %}
-              <span class="badge bg-info text-dark">{{ s.backup_retention_days }}d</span>
-              {% else %}—{% endif %}
-            </td>
+            <td><small class="text-muted">{{ (s.synced_at or '')[:16].replace('T',' ') }}</small></td>
           </tr>
           {% endfor %}
         </tbody>
